@@ -1,10 +1,5 @@
 # AI Gateway Payload Processing
 
-This repository contains BBR (Best of Breed Routing) plugins for the [llm-d](https://github.com/llm-d) AI Gateway inference scheduler.
+This repository contains Payload Processing plugins that will be connected to an AI Gateway via pluggable BBR (Body Based Routing) framework that was developed as part of [Kuberenetes Inference Gateway](https://github.com/kubernetes-sigs/gateway-api-inference-extension).
 
-BBR plugins enable custom request routing logic for LLM inference workloads, allowing fine-grained control over how requests are distributed across model-serving backends.
-
-## Related Projects
-
-- [llm-d-inference-scheduler](https://github.com/llm-d/llm-d-inference-scheduler) — The inference scheduler (EPP) that hosts BBR plugins
-- [semantic-router](https://github.com/opendatahub-io/semantic-router) — vLLM Semantic Router (vSR) for semantic-aware routing
+BBR plugins enable custom request/reseponse mutations of both headers and body, allowing advanced capabilites such as promoting the model from a field in the body to a header and route to a selected endpoint accordingly.
