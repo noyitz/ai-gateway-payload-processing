@@ -74,7 +74,7 @@ func (p *ExamplePlugin) WithName(name string) *ExamplePlugin {
 // ProcessRequest extracts value from a given body field and sets it as HTTP header.
 func (p *ExamplePlugin) ProcessRequest(ctx context.Context, request *framework.InferenceRequest) error {
 	if request == nil || request.Headers == nil || request.Body == nil {
-		return nil // this shouldn't happen
+		return fmt.Errorf("invalid inference request: request/headers/body must be non-nil") // this shouldn't happen
 	}
 
 	// extract value from headers
