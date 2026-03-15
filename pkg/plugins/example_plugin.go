@@ -98,14 +98,14 @@ func (p *ExamplePlugin) ProcessRequest(ctx context.Context, request *framework.I
 
 	// mutations
 	// for mutating headers, use request.SetHeader/RemoveHeader
-	request.SetHeader(exampleHeaderKey, headerValue+headerValue) // example for mutation an existing header
-	request.SetHeader(exampleHeaderKey+"-new", headerValue)      // example for adding a new header
-	request.RemoveHeader("header-to-remove")                     // example for removing a header.
+	// request.SetHeader(exampleHeaderKey, headerValue+headerValue) // example for mutation an existing header
+	// request.SetHeader(exampleHeaderKey+"-new", headerValue)      // example for adding a new header
+	// request.RemoveHeader("header-to-remove")                     // example for removing a header.
 
 	// for mutation request body, use the appropriate Set/Remove functions.
-	request.SetBody(map[string]any{"new": "body"})               // use SetBody to override the whole body at once. this is useful in specific use casees.
-	request.SetBodyField(exampleBodyFieldKey, fieldStr+fieldStr) // use SetBodyField to mutate a specific body field.
-	request.RemoveBodyField("field-to-remove")                   // use RemoveBodyField to remove a specific body field.
+	// request.SetBody(map[string]any{"new": "body"})               // use SetBody to override the whole body at once. this is useful in specific use casees.
+	// request.SetBodyField(exampleBodyFieldKey, fieldStr+fieldStr) // use SetBodyField to mutate a specific body field.
+	// request.RemoveBodyField("field-to-remove")                   // use RemoveBodyField to remove a specific body field.
 
 	return nil
 }
