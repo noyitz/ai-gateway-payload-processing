@@ -25,10 +25,11 @@ package main
 import (
 	"os"
 
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/gateway-api-inference-extension/cmd/bbr/runner"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
+
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins"
 )
 
 func main() {
