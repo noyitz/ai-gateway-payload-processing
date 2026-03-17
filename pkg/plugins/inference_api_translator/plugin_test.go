@@ -206,8 +206,13 @@ func TestDetectProviderFromResponse(t *testing.T) {
 		},
 		{
 			name:     "openai error",
-			body:     map[string]any{"error": map[string]any{"message": "bad request"}},
+			body:     map[string]any{"error": map[string]any{"message": "bad request", "type": "invalid_request_error"}},
 			expected: "openai",
+		},
+		{
+			name:     "generic error not matched",
+			body:     map[string]any{"error": "some string"},
+			expected: "",
 		},
 		{
 			name:     "unknown format",

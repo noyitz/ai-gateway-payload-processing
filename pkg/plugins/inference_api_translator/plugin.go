@@ -163,11 +163,15 @@ func detectProviderFromResponse(body map[string]any) string {
 			return "anthropic"
 		}
 	}
-	if _, ok := body["object"].(string); ok {
+	if object, ok := body["object"].(string); ok && object == "chat.completion" {
 		return "openai"
 	}
-	if _, ok := body["error"]; ok {
-		return "openai"
+	if errObj, ok := body["error"].(map[string]any); ok {
+		_, hasMessage := errObj["message"].(string)
+		_, hasType := errObj["type"].(string)
+		if hasMessage && hasType {
+			return "openai"
+		}
 	}
 	return ""
 }

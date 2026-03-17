@@ -17,6 +17,7 @@ limitations under the License.
 package providers
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -400,7 +401,16 @@ func getInt(body map[string]any, key string) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	return toInt(v), true
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }
 
 func toInt(v any) int {
@@ -423,9 +433,11 @@ func toJSONString(v any) string {
 	if s, ok := v.(string); ok {
 		return s
 	}
-	// For map/slice types, marshal to JSON string
-	// Using fmt as a simple fallback since we work with map[string]any
-	return fmt.Sprintf("%v", v)
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 func joinStrings(parts []string, sep string) string {
