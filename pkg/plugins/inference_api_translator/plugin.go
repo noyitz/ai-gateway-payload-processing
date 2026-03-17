@@ -25,6 +25,8 @@ import (
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/framework/interface/plugin"
 
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/inference_api_translator/providers"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/inference_api_translator/providers/anthropic"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/inference_api_translator/providers/openai"
 )
 
 const (
@@ -52,8 +54,8 @@ type InferenceAPITranslatorPlugin struct {
 func NewInferenceAPITranslatorPlugin() (*InferenceAPITranslatorPlugin, error) {
 	providerMap := map[string]providers.Provider{}
 	for _, p := range []providers.Provider{
-		providers.NewAnthropicProvider(),
-		providers.NewOpenAIProvider(),
+		anthropic.NewAnthropicProvider(),
+		openai.NewOpenAIProvider(),
 	} {
 		providerMap[p.Name()] = p
 	}
