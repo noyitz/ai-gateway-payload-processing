@@ -19,6 +19,7 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -120,7 +121,10 @@ func (p *AnthropicProvider) TranslateResponse(body map[string]any, model string)
 
 	// Extract tool_use blocks if stop_reason is tool_use
 	if finishReason == "tool_calls" {
-		toolCalls := extractAnthropicToolCalls(body)
+		toolCalls, err := extractAnthropicToolCalls(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract tool calls: %w", err)
+		}
 		if len(toolCalls) > 0 {
 			message["tool_calls"] = toolCalls
 		}
@@ -310,14 +314,15 @@ func extractAnthropicContent(body map[string]any) string {
 
 // extractAnthropicToolCalls extracts tool_use blocks from an Anthropic response
 // and converts them to OpenAI tool_calls format.
-func extractAnthropicToolCalls(body map[string]any) []any {
+func extractAnthropicToolCalls(body map[string]any) ([]any, error) {
 	contentBlocks, ok := body["content"].([]any)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	var toolCalls []any
-	for i, block := range contentBlocks {
+	toolIndex := 0
+	for _, block := range contentBlocks {
 		blockMap, ok := block.(map[string]any)
 		if !ok {
 			continue
@@ -327,20 +332,26 @@ func extractAnthropicToolCalls(body map[string]any) []any {
 			name, _ := blockMap["name"].(string)
 			input := blockMap["input"]
 
+			args, err := toJSONString(input)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal tool call arguments for %q: %w", name, err)
+			}
+
 			toolCall := map[string]any{
 				"id":    id,
-				"index": i,
+				"index": toolIndex,
 				"type":  "function",
 				"function": map[string]any{
 					"name":      name,
-					"arguments": toJSONString(input),
+					"arguments": args,
 				},
 			}
 			toolCalls = append(toolCalls, toolCall)
+			toolIndex++
 		}
 	}
 
-	return toolCalls
+	return toolCalls, nil
 }
 
 // mapStopReason maps Anthropic stop_reason to OpenAI finish_reason.
@@ -426,27 +437,20 @@ func toInt(v any) int {
 	}
 }
 
-func toJSONString(v any) string {
+func toJSONString(v any) (string, error) {
 	if v == nil {
-		return "{}"
+		return "{}", nil
 	}
 	if s, ok := v.(string); ok {
-		return s
+		return s, nil
 	}
 	b, err := json.Marshal(v)
 	if err != nil {
-		return "{}"
+		return "", fmt.Errorf("failed to marshal to JSON: %w", err)
 	}
-	return string(b)
+	return string(b), nil
 }
 
 func joinStrings(parts []string, sep string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	result := parts[0]
-	for _, p := range parts[1:] {
-		result += sep + p
-	}
-	return result
+	return strings.Join(parts, sep)
 }

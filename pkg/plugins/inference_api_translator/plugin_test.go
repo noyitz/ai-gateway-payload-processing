@@ -119,6 +119,15 @@ func TestProcessRequest_NilRequest(t *testing.T) {
 	assert.Contains(t, err.Error(), "non-nil")
 }
 
+func TestProcessResponse_NilResponse(t *testing.T) {
+	p, err := NewInferenceAPITranslatorPlugin()
+	require.NoError(t, err)
+
+	err = p.ProcessResponse(context.Background(), nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "non-nil")
+}
+
 func TestProcessResponse_AnthropicDetected(t *testing.T) {
 	p, err := NewInferenceAPITranslatorPlugin()
 	require.NoError(t, err)
@@ -154,6 +163,69 @@ func TestProcessResponse_AnthropicDetected(t *testing.T) {
 	assert.Equal(t, 10, usage["prompt_tokens"])
 	assert.Equal(t, 5, usage["completion_tokens"])
 	assert.Equal(t, 15, usage["total_tokens"])
+}
+
+func TestProcessResponse_AnthropicError(t *testing.T) {
+	p, err := NewInferenceAPITranslatorPlugin()
+	require.NoError(t, err)
+
+	resp := framework.NewInferenceResponse()
+	resp.Body["type"] = "error"
+	resp.Body["error"] = map[string]any{
+		"type":    "invalid_request_error",
+		"message": "max_tokens must be positive",
+	}
+
+	err = p.ProcessResponse(context.Background(), resp)
+	require.NoError(t, err)
+
+	assert.True(t, resp.BodyMutated())
+	errObj := resp.Body["error"].(map[string]any)
+	assert.Equal(t, "invalid_request_error", errObj["type"])
+	assert.Equal(t, "max_tokens must be positive", errObj["message"])
+}
+
+func TestProcessResponse_AnthropicToolUse(t *testing.T) {
+	p, err := NewInferenceAPITranslatorPlugin()
+	require.NoError(t, err)
+
+	resp := framework.NewInferenceResponse()
+	resp.Body["id"] = "msg_456"
+	resp.Body["type"] = "message"
+	resp.Body["model"] = "claude-sonnet-4-20250514"
+	resp.Body["content"] = []any{
+		map[string]any{"type": "text", "text": "Let me check."},
+		map[string]any{
+			"type":  "tool_use",
+			"id":    "toolu_abc",
+			"name":  "get_weather",
+			"input": map[string]any{"location": "Paris"},
+		},
+	}
+	resp.Body["stop_reason"] = "tool_use"
+	resp.Body["usage"] = map[string]any{
+		"input_tokens":  float64(20),
+		"output_tokens": float64(10),
+	}
+
+	err = p.ProcessResponse(context.Background(), resp)
+	require.NoError(t, err)
+
+	assert.True(t, resp.BodyMutated())
+
+	choices := resp.Body["choices"].([]any)
+	choice := choices[0].(map[string]any)
+	assert.Equal(t, "tool_calls", choice["finish_reason"])
+
+	msg := choice["message"].(map[string]any)
+	toolCalls := msg["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+
+	tc := toolCalls[0].(map[string]any)
+	assert.Equal(t, "toolu_abc", tc["id"])
+	assert.Equal(t, 0, tc["index"])
+	fn := tc["function"].(map[string]any)
+	assert.Equal(t, "get_weather", fn["name"])
 }
 
 func TestProcessResponse_OpenAIPassthrough(t *testing.T) {
