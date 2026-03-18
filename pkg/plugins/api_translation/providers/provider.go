@@ -20,9 +20,6 @@ package providers
 // provider's native API format. Implementations handle both request and response
 // translation using generic map[string]any bodies (pre-parsed JSON from the BBR framework).
 type Provider interface {
-	// Name returns the provider identifier (e.g., "anthropic", "openai").
-	Name() string
-
 	// TranslateRequest translates an OpenAI-format request body to the provider's native format.
 	// Returns the translated body, headers to set, headers to remove, and any error.
 	// A nil translatedBody means no body mutation is needed.

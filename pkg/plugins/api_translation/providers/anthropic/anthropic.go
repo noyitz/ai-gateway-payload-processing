@@ -24,6 +24,9 @@ import (
 )
 
 const (
+	// ProviderName is the identifier for this provider, used as the CycleState key value.
+	ProviderName = "anthropic"
+
 	anthropicAPIVersion = "2023-06-01"
 	anthropicPath       = "/v1/messages"
 	defaultMaxTokens    = 4096
@@ -35,10 +38,6 @@ type AnthropicProvider struct{}
 
 func NewAnthropicProvider() *AnthropicProvider {
 	return &AnthropicProvider{}
-}
-
-func (p *AnthropicProvider) Name() string {
-	return "anthropic"
 }
 
 // TranslateRequest translates an OpenAI Chat Completions request body to Anthropic Messages API format.
