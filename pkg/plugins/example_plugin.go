@@ -113,8 +113,9 @@ func (p *ExamplePlugin) ProcessRequest(ctx context.Context, cycleState *framewor
 	// of the same plugin (e.g., api-translation can communicate which provider was chosen from the request to the response).
 
 	// CycleState is a per-request state shared between the plugins, on all hook points
-	cycleState.Write("internal-state-key", 24)                         // share with other plugins/hook points, can add any type of value
-	framework.ReadCycleStateKey[int](cycleState, "internal-state-key") // use this function with given T to get autoconversion by the framework
+	cycleState.Write("state-key", 24)                         // share with other plugins/hook points, can add any type of value
+	framework.ReadCycleStateKey[int](cycleState, "state-key") // use this function with given T to get autoconversion by the framework
+	cycleState.Delete("state-key")                            // delete a state. NO need to clean cycle state at the end of request handling.
 
 	return nil
 }
