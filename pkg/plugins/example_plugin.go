@@ -36,7 +36,7 @@ const (
 var _ framework.RequestProcessor = &ExamplePlugin{}
 
 // ExamplePluginFactory defines the factory function for ExamplePlugin.
-func ExamplePluginFactory(name string, _ json.RawMessage) (framework.BBRPlugin, error) {
+func ExamplePluginFactory(name string, _ json.RawMessage, _ framework.Handle) (framework.BBRPlugin, error) {
 	plugin, err := NewExamplePlugin()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create '%s' plugin - %w", ExamplePluginType, err)
@@ -72,7 +72,7 @@ func (p *ExamplePlugin) WithName(name string) *ExamplePlugin {
 }
 
 // ProcessRequest extracts value from a given body field and sets it as HTTP header.
-func (p *ExamplePlugin) ProcessRequest(ctx context.Context, request *framework.InferenceRequest) error {
+func (p *ExamplePlugin) ProcessRequest(ctx context.Context, cycleState *framework.CycleState, request *framework.InferenceRequest) error {
 	if request == nil || request.Headers == nil || request.Body == nil {
 		return fmt.Errorf("invalid inference request: request/headers/body must be non-nil") // this shouldn't happen
 	}
@@ -106,6 +106,15 @@ func (p *ExamplePlugin) ProcessRequest(ctx context.Context, request *framework.I
 	// request.SetBody(map[string]any{"new": "body"})               // use SetBody to override the whole body at once. this is useful in specific use casees.
 	// request.SetBodyField(exampleBodyFieldKey, fieldStr+fieldStr) // use SetBodyField to mutate a specific body field.
 	// request.RemoveBodyField("field-to-remove")                   // use RemoveBodyField to remove a specific body field.
+
+	// CycleState is a shared object between all plugins that can be used to share a per-request information between plugins
+	// without thrashing the request itself (not update the request headers for example).
+	// in some use cases there is a need to communicate information between plugins or even between different extension points
+	// of the same plugin (e.g., api-translation can communicate which provider was chosen from the request to the response).
+
+	// CycleState is a per-request state shared between the plugins, on all hook points
+	cycleState.Write("internal-state-key", 24)                         // share with other plugins/hook points, can add any type of value
+	framework.ReadCycleStateKey[int](cycleState, "internal-state-key") // use this function with given T to get autoconversion by the framework
 
 	return nil
 }

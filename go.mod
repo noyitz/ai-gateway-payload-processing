@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	sigs.k8s.io/controller-runtime v0.23.3
-	sigs.k8s.io/gateway-api-inference-extension v0.0.0-20260314232134-812da04d277e
+	sigs.k8s.io/gateway-api-inference-extension v0.0.0-20260318135032-876ac9d909d0
 )
 
 require (
