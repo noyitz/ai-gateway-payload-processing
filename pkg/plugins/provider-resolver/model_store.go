@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package provider_resolver
+package providerresolver
 
 import (
 	"sync"
@@ -24,8 +24,8 @@ import (
 
 // ModelInfo holds the provider and credential reference for an external model.
 type ModelInfo struct {
-	Provider             string
-	CredentialRefName     string
+	Provider               string
+	CredentialRefName      string
 	CredentialRefNamespace string
 }
 
