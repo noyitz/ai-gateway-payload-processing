@@ -116,7 +116,7 @@ func (p *ExamplePlugin) ProcessRequest(ctx context.Context, cycleState *framewor
 	cycleState.Write("state-key", 24)                                   // share with other plugins/hook points, can add any type of value
 	_, err := framework.ReadCycleStateKey[int](cycleState, "state-key") // use this function with given T to get autoconversion by the framework
 	if err != nil {
-		fmt.Println("couldn't read value from cycle state - %w", err)
+		return fmt.Errorf("couldn't read value from cycle state - %w", err)
 	}
 	cycleState.Delete("state-key") // delete a state. NO need to clean cycle state at the end of request handling.
 
