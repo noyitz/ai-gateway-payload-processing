@@ -90,29 +90,30 @@ func (p *APITranslationPlugin) ProcessRequest(ctx context.Context, cycleState *f
 
 	translator, ok := p.providers[providerName]
 	if !ok {
-		return fmt.Errorf("unsupported provider %q", providerName)
+		return fmt.Errorf("unsupported provider - '%s'", providerName)
 	}
 
-	// Store model in CycleState for response use
-	if model, ok := request.Body["model"].(string); ok {
-		cycleState.Write(state.ModelKey, model)
-	}
-
-	translatedBody, headers, headersToRemove, err := translator.TranslateRequest(request.Body)
+	translatedBody, headersToMutate, headersToRemove, err := translator.TranslateRequest(request.Body)
 	if err != nil {
-		return fmt.Errorf("request translation failed for provider %q: %w", providerName, err)
+		return fmt.Errorf("request translation failed for provider '%s' - %w", providerName, err)
 	}
 
 	if translatedBody != nil {
 		request.SetBody(translatedBody)
 	}
 
-	for k, v := range headers {
-		request.SetHeader(k, v)
+	for key, value := range headersToMutate {
+		request.SetHeader(key, value)
 	}
-	for _, k := range headersToRemove {
-		request.RemoveHeader(k)
+	for _, key := range headersToRemove {
+		request.RemoveHeader(key)
 	}
+
+	// authorization is a special header removed by the plugin, no matter which provider is used.
+	// The api-key is expected to be set by the the api-key injection plugin.
+	request.RemoveHeader("authorization")
+
+	// content-length is another special header that will be set automatically by the pluggable framework when the body is mutated.
 
 	return nil
 }
@@ -124,8 +125,8 @@ func (p *APITranslationPlugin) ProcessResponse(ctx context.Context, cycleState *
 		return fmt.Errorf("invalid inference response: response/headers/body must be non-nil")
 	}
 
-	providerName, _ := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey)
-	if providerName == "" || providerName == "openai" {
+	providerName, err := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey) // err if not found
+	if err != nil || providerName == "" || providerName == "openai" {                       // empty provider means no translation needed
 		return nil
 	}
 

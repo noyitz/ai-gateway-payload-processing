@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package provider_resolver
+package model_provider_resolver
 
 import (
 	"context"
@@ -31,7 +31,7 @@ import (
 // and updates the model store with provider and credential information.
 type maasModelRefReconciler struct {
 	client.Reader
-	store *modelStore
+	store *modelInfoStore
 }
 
 // Reconcile handles create/update/delete events for MaaSModelRef resources.
@@ -85,7 +85,7 @@ func (r *maasModelRefReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	r.store.setModel(modelName, info, req.NamespacedName)
+	r.store.setModelInfo(modelName, info, req.NamespacedName)
 	logger.Info("Updated model store", "model", modelName, "provider", provider)
 
 	return ctrl.Result{}, nil

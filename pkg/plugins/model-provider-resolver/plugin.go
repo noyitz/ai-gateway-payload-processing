@@ -14,11 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package provider_resolver
+package model_provider_resolver
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/state"
@@ -29,7 +30,7 @@ import (
 )
 
 const (
-	ProviderResolverPluginType = "provider-resolver"
+	ModelProviderResolverPluginType = "model-provider-resolver"
 )
 
 // maasModelRefGVK is the GroupVersionKind for MaaSModelRef CRD.
@@ -40,12 +41,12 @@ var maasModelRefGVK = schema.GroupVersionKind{
 }
 
 // compile-time type validation
-var _ framework.RequestProcessor = &ProviderResolverPlugin{}
+var _ framework.RequestProcessor = &ModelProviderResolverPlugin{}
 
-// ProviderResolverFactory creates a new ProviderResolverPlugin and registers a MaaSModelRef reconciler
+// ModelProviderResolverFactory creates a new ProviderResolverPlugin and registers a MaaSModelRef reconciler
 // via the framework Handle. Uses unstructured client to avoid importing MaaS controller types.
-func ProviderResolverFactory(name string, _ json.RawMessage, handle framework.Handle) (framework.BBRPlugin, error) {
-	store := newModelStore()
+func ModelProviderResolverFactory(name string, _ json.RawMessage, handle framework.Handle) (framework.BBRPlugin, error) {
+	store := newModelInfoStore()
 
 	reconciler := &maasModelRefReconciler{
 		Reader: handle.ClientReader(),
@@ -59,13 +60,13 @@ func ProviderResolverFactory(name string, _ json.RawMessage, handle framework.Ha
 	if err := handle.ReconcilerBuilder().
 		For(obj).
 		Complete(reconciler); err != nil {
-		return nil, fmt.Errorf("failed to register MaaSModelRef reconciler for plugin '%s' - %w", ProviderResolverPluginType, err)
+		return nil, fmt.Errorf("failed to register MaaSModelRef reconciler for plugin '%s' - %w", ModelProviderResolverPluginType, err)
 	}
 
-	p := &ProviderResolverPlugin{
+	p := &ModelProviderResolverPlugin{
 		typedName: plugin.TypedName{
-			Type: ProviderResolverPluginType,
-			Name: ProviderResolverPluginType,
+			Type: ModelProviderResolverPluginType,
+			Name: ModelProviderResolverPluginType,
 		},
 		store: store,
 	}
@@ -73,49 +74,48 @@ func ProviderResolverFactory(name string, _ json.RawMessage, handle framework.Ha
 	return p.WithName(name), nil
 }
 
-// ProviderResolverPlugin resolves model names to providers by watching MaaSModelRef CRDs.
-// It writes the provider and credential reference to CycleState for downstream plugins
+// ModelProviderResolverPlugin resolves model names to provider infro by watching MaaSModelRef CRDs.
+// It writes the model, provider and credential reference to CycleState for downstream plugins
 // (api-translation, api-key-injection).
-type ProviderResolverPlugin struct {
+type ModelProviderResolverPlugin struct {
 	typedName plugin.TypedName
-	store     *modelStore
+	store     *modelInfoStore
 }
 
 // TypedName returns the type and name tuple of this plugin instance.
-func (p *ProviderResolverPlugin) TypedName() plugin.TypedName {
+func (p *ModelProviderResolverPlugin) TypedName() plugin.TypedName {
 	return p.typedName
 }
 
 // WithName sets the name of the plugin instance.
-func (p *ProviderResolverPlugin) WithName(name string) *ProviderResolverPlugin {
+func (p *ModelProviderResolverPlugin) WithName(name string) *ModelProviderResolverPlugin {
 	p.typedName.Name = name
 	return p
 }
 
 // ProcessRequest reads the model name from the request body, resolves the provider
-// from the model store (populated by MaaSModelRef reconciler), and writes provider
+// from the model store (populated by MaaSModelRef reconciler), and writes model, provider
 // and credential reference info to CycleState.
-func (p *ProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleState *framework.CycleState, request *framework.InferenceRequest) error {
+func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleState *framework.CycleState, request *framework.InferenceRequest) error {
 	if request == nil || request.Headers == nil || request.Body == nil {
 		return fmt.Errorf("invalid inference request: request/headers/body must be non-nil")
 	}
 
 	model, ok := request.Body["model"].(string)
 	if !ok || model == "" {
-		return nil
+		return errors.New("failed to read 'model' from request body")
 	}
 
-	info, found := p.store.getProvider(model)
-	if !found {
-		return nil
+	info, found := p.store.getModelInfo(model)
+	if !found { // info is stored only for external models
+		return nil // this is not considered an error, we just need to skip
 	}
 
+	// info of external model written to cycle state for next plugins
+	cycleState.Write(state.ModelKey, model)
 	cycleState.Write(state.ProviderKey, info.provider)
-
-	if info.credentialRefName != "" {
-		cycleState.Write(state.CredsRefName, info.credentialRefName)
-		cycleState.Write(state.CredsRefNamespace, info.credentialRefNamespace)
-	}
+	cycleState.Write(state.CredsRefName, info.credentialRefName)
+	cycleState.Write(state.CredsRefNamespace, info.credentialRefNamespace)
 
 	return nil
 }

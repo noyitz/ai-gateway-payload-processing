@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package provider_resolver
+package model_provider_resolver
 
 import (
 	"sync"
@@ -29,9 +29,9 @@ type ModelInfo struct {
 	credentialRefNamespace string
 }
 
-// modelStore is a thread-safe in-memory store that maps model names to their provider info.
+// modelInfoStore is a thread-safe in-memory store that maps model names to their provider info.
 // The reconciler writes to it; the plugin reads from it during request processing.
-type modelStore struct {
+type modelInfoStore struct {
 	models map[string]ModelInfo
 	// modelRefKeyToModel tracks which MaaSModelRef resource added each model entry,
 	// so we can clean up when the resource is deleted.
@@ -39,23 +39,23 @@ type modelStore struct {
 	lock               sync.RWMutex
 }
 
-func newModelStore() *modelStore {
-	return &modelStore{
+func newModelInfoStore() *modelInfoStore {
+	return &modelInfoStore{
 		models:             make(map[string]ModelInfo),
 		modelRefKeyToModel: make(map[types.NamespacedName]string),
 	}
 }
 
-// getProvider returns the ModelInfo for a model name, or empty if not found.
-func (s *modelStore) getProvider(modelName string) (ModelInfo, bool) {
+// getModelInfo returns the ModelInfo for a model name, or empty if not found.
+func (s *modelInfoStore) getModelInfo(modelName string) (ModelInfo, bool) {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 	info, ok := s.models[modelName]
 	return info, ok
 }
 
-// setModel stores the model→provider mapping and records which resource it came from.
-func (s *modelStore) setModel(modelName string, info ModelInfo, modelRefKey types.NamespacedName) {
+// setModelInfo stores the model→provider mapping and records which resource it came from.
+func (s *modelInfoStore) setModelInfo(modelName string, info ModelInfo, modelRefKey types.NamespacedName) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.models[modelName] = info
@@ -63,7 +63,7 @@ func (s *modelStore) setModel(modelName string, info ModelInfo, modelRefKey type
 }
 
 // deleteByResource removes the model entry that was added by the given MaaSModelRef resource.
-func (s *modelStore) deleteByResource(modelRefKey types.NamespacedName) {
+func (s *modelInfoStore) deleteByResource(modelRefKey types.NamespacedName) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	modelName, ok := s.modelRefKeyToModel[modelRefKey]

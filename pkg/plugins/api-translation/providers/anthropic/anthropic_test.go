@@ -48,8 +48,7 @@ func TestTranslateRequest_BasicChat(t *testing.T) {
 	assert.Equal(t, "application/json", headers["content-type"])
 	assert.Equal(t, anthropicPath, headers[":path"])
 
-	assert.Contains(t, headersToRemove, "authorization")
-	assert.Contains(t, headersToRemove, "content-length")
+	assert.Empty(t, headersToRemove)
 }
 
 func TestTranslateRequest_SystemMessage(t *testing.T) {

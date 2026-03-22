@@ -55,7 +55,7 @@ func (p *AzureOpenAIProvider) TranslateRequest(body map[string]any) (map[string]
 		return nil, nil, nil, fmt.Errorf("model field is required")
 	}
 	if !deploymentIDPattern.MatchString(model) {
-		return nil, nil, nil, fmt.Errorf("model %q contains invalid characters for Azure deployment ID", model)
+		return nil, nil, nil, fmt.Errorf("model '%s' contains invalid characters for Azure deployment ID", model)
 	}
 
 	headers := map[string]string{
@@ -63,12 +63,8 @@ func (p *AzureOpenAIProvider) TranslateRequest(body map[string]any) (map[string]
 		"content-type": "application/json",
 	}
 
-	// Azure uses "api-key" header instead of "Authorization: Bearer".
-	// The api-key is expected to be set by the upstream infrastructure layer.
-	headersToRemove := []string{"authorization"}
-
-	// Return nil body — no mutation needed, Azure accepts the OpenAI request format as-is.
-	return nil, headers, headersToRemove, nil
+	// Return nil body — no body mutation is needed, Azure accepts the OpenAI request format as-is.
+	return nil, headers, nil, nil
 }
 
 // TranslateResponse is a no-op since Azure OpenAI returns responses in OpenAI format.

@@ -27,11 +27,6 @@ import (
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/state"
 )
 
-func newCycleState() *framework.CycleState {
-	cs := framework.NewCycleState()
-	return cs
-}
-
 func newCycleStateWithProvider(providerName string) *framework.CycleState {
 	cs := framework.NewCycleState()
 	cs.Write(state.ProviderKey, providerName)
@@ -41,12 +36,11 @@ func newCycleStateWithProvider(providerName string) *framework.CycleState {
 func TestProcessRequest_NoProvider(t *testing.T) {
 	p := NewAPITranslationPlugin()
 
-	cs := newCycleState()
 	req := framework.NewInferenceRequest()
 	req.Body["model"] = "gpt-4o"
 	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "Hi"}}
 
-	err := p.ProcessRequest(context.Background(), cs, req)
+	err := p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
 	assert.NoError(t, err)
 	assert.False(t, req.BodyMutated())
 }
@@ -98,12 +92,7 @@ func TestProcessRequest_AnthropicProvider(t *testing.T) {
 
 	removed := req.RemovedHeaders()
 	assert.Contains(t, removed, "authorization")
-	assert.Contains(t, removed, "content-length")
-
-	// Verify model stored in CycleState
-	model, err := framework.ReadCycleStateKey[string](cs, state.ModelKey)
-	assert.NoError(t, err)
-	assert.Equal(t, "claude-sonnet-4-20250514", model)
+	assert.NotContains(t, removed, "content-length")
 }
 
 func TestProcessRequest_AzureOpenAIProvider(t *testing.T) {
@@ -139,11 +128,6 @@ func TestProcessRequest_AzureOpenAIProvider(t *testing.T) {
 	removed := req.RemovedHeaders()
 	assert.Contains(t, removed, "authorization")
 	assert.NotContains(t, removed, "content-length")
-
-	// Verify model stored in CycleState
-	model, err := framework.ReadCycleStateKey[string](cs, state.ModelKey)
-	assert.NoError(t, err)
-	assert.Equal(t, "gpt-4o", model)
 }
 
 func TestProcessResponse_AzureOpenAI(t *testing.T) {
@@ -182,7 +166,7 @@ func TestProcessResponse_AzureOpenAI(t *testing.T) {
 func TestProcessRequest_UnknownProvider(t *testing.T) {
 	p := NewAPITranslationPlugin()
 
-	cs := newCycleStateWithProvider("bedrock")
+	cs := newCycleStateWithProvider("unknown")
 	req := framework.NewInferenceRequest()
 	req.Body["model"] = "some-model"
 	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "Hi"}}
@@ -190,13 +174,13 @@ func TestProcessRequest_UnknownProvider(t *testing.T) {
 	err := p.ProcessRequest(context.Background(), cs, req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported provider")
-	assert.Contains(t, err.Error(), "bedrock")
+	assert.Contains(t, err.Error(), "unknown")
 }
 
 func TestProcessRequest_NilRequest(t *testing.T) {
 	p := NewAPITranslationPlugin()
 
-	err := p.ProcessRequest(context.Background(), newCycleState(), nil)
+	err := p.ProcessRequest(context.Background(), framework.NewCycleState(), nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "non-nil")
 }
@@ -204,7 +188,7 @@ func TestProcessRequest_NilRequest(t *testing.T) {
 func TestProcessResponse_NilResponse(t *testing.T) {
 	p := NewAPITranslationPlugin()
 
-	err := p.ProcessResponse(context.Background(), newCycleState(), nil)
+	err := p.ProcessResponse(context.Background(), framework.NewCycleState(), nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "non-nil")
 }
@@ -312,15 +296,13 @@ func TestProcessResponse_AnthropicToolUse(t *testing.T) {
 func TestProcessResponse_NoProviderPassthrough(t *testing.T) {
 	p := NewAPITranslationPlugin()
 
-	cs := newCycleState() // no provider in CycleState
-
 	resp := framework.NewInferenceResponse()
 	resp.Body["object"] = "chat.completion"
 	resp.Body["choices"] = []any{
 		map[string]any{"message": map[string]any{"content": "hi"}},
 	}
 
-	err := p.ProcessResponse(context.Background(), cs, resp)
+	err := p.ProcessResponse(context.Background(), framework.NewCycleState(), resp)
 	assert.NoError(t, err)
 	assert.False(t, resp.BodyMutated())
 }

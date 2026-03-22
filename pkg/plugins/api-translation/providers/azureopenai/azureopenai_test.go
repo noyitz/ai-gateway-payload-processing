@@ -41,8 +41,7 @@ func TestTranslateRequest_BasicChat(t *testing.T) {
 	assert.Equal(t, expectedPath, headers[":path"])
 	assert.Equal(t, "application/json", headers["content-type"])
 
-	assert.Contains(t, headersToRemove, "authorization")
-	assert.NotContains(t, headersToRemove, "content-length")
+	assert.Empty(t, headersToRemove)
 }
 
 func TestTranslateRequest_ModelUsedAsDeploymentID(t *testing.T) {
@@ -194,8 +193,7 @@ func TestTranslateRequest_HeadersRemoved(t *testing.T) {
 	_, _, headersToRemove, err := NewAzureOpenAIProvider().TranslateRequest(body)
 	require.NoError(t, err)
 
-	assert.Contains(t, headersToRemove, "authorization")
-	assert.NotContains(t, headersToRemove, "content-length")
+	assert.Empty(t, headersToRemove)
 }
 
 func TestTranslateResponse_Passthrough(t *testing.T) {
