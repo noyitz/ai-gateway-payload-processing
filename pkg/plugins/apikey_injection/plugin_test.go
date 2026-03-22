@@ -84,6 +84,14 @@ func TestProcessRequest(t *testing.T) {
 			},
 		},
 		{
+			name:       "Vertex provider — injects Authorization: Bearer (same as OpenAI)",
+			secrets:    []*corev1.Secret{testSecret("default", "vertex-key", "vtx-key-456")},
+			cycleState: newCycleState("default", "vertex-key", provider.Vertex),
+			wantHeaders: map[string]string{
+				"Authorization": "Bearer vtx-key-456",
+			},
+		},
+		{
 			name:       "default provider when CycleState has no provider — uses OpenAI Bearer",
 			secrets:    []*corev1.Secret{testSecret("default", "no-provider", "sk-key")},
 			cycleState: newCycleState("default", "no-provider", ""),
@@ -185,7 +193,11 @@ func TestDefaultInjectors(t *testing.T) {
 	assert.Equal(t, "api-key", injectors[provider.AzureOpenAI].headerName)
 	assert.Empty(t, injectors[provider.AzureOpenAI].headerValuePrefix)
 
-	assert.Len(t, injectors, 3)
+	require.Contains(t, injectors, provider.Vertex)
+	assert.Equal(t, "Authorization", injectors[provider.Vertex].headerName)
+	assert.Equal(t, "Bearer ", injectors[provider.Vertex].headerValuePrefix)
+
+	assert.Len(t, injectors, 4)
 }
 
 func TestAPIKeyInjector(t *testing.T) {
