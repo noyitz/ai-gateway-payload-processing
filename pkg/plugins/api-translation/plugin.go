@@ -28,6 +28,7 @@ import (
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/state"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/providers"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/providers/anthropic"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/providers/azureopenai"
 )
 
 const (
@@ -51,7 +52,8 @@ func NewAPITranslationPlugin() *APITranslationPlugin {
 			Name: APITranslationPluginType,
 		},
 		providers: map[string]providers.Provider{
-			provider.Anthropic: anthropic.NewAnthropicProvider(),
+			provider.Anthropic:   anthropic.NewAnthropicProvider(),
+			provider.AzureOpenAI: azureopenai.NewAzureOpenAIProvider(),
 		},
 	}
 }
