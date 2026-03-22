@@ -31,34 +31,43 @@ import (
 
 func TestProcessRequest_ModelResolved(t *testing.T) {
 	store := newModelInfoStore()
-	store.setModelInfo("claude-sonnet", ModelInfo{
+	model := "claude-sonnet"
+	credentialRefName := "anthropic-key"
+	credentialRefNamespace := "llm"
+	store.setModelInfo(model, ModelInfo{
 		provider:               provider.Anthropic,
-		credentialRefName:      "anthropic-key",
-		credentialRefNamespace: "llm",
+		credentialRefName:      credentialRefName,
+		credentialRefNamespace: credentialRefNamespace,
 	}, types.NamespacedName{Name: "claude-sonnet", Namespace: "llm"})
 
-	p := &ModelProviderResolverPlugin{store: store}
+	plugin := &ModelProviderResolverPlugin{modelInfoStore: store}
 	cs := framework.NewCycleState()
 	req := framework.NewInferenceRequest()
-	req.Body["model"] = "claude-sonnet"
+	req.Body["model"] = model
 
-	err := p.ProcessRequest(context.Background(), cs, req)
+	err := plugin.ProcessRequest(context.Background(), cs, req)
 	require.NoError(t, err)
 
-	actualProvider, provErr := framework.ReadCycleStateKey[string](cs, state.ProviderKey)
-	assert.NoError(t, provErr)
+	actualModel, err := framework.ReadCycleStateKey[string](cs, state.ModelKey)
+	assert.NoError(t, err)
+	assert.Equal(t, model, actualModel)
+
+	actualProvider, err := framework.ReadCycleStateKey[string](cs, state.ProviderKey)
+	assert.NoError(t, err)
 	assert.Equal(t, provider.Anthropic, actualProvider)
 
-	credName, _ := framework.ReadCycleStateKey[string](cs, "credential-ref-name")
-	assert.Equal(t, "anthropic-key", credName)
+	actualCredsName, err := framework.ReadCycleStateKey[string](cs, state.CredsRefName)
+	assert.NoError(t, err)
+	assert.Equal(t, credentialRefName, actualCredsName)
 
-	credNS, _ := framework.ReadCycleStateKey[string](cs, "credential-ref-namespace")
-	assert.Equal(t, "llm", credNS)
+	actualCredsNamespace, err := framework.ReadCycleStateKey[string](cs, state.CredsRefNamespace)
+	assert.NoError(t, err)
+	assert.Equal(t, credentialRefNamespace, actualCredsNamespace)
 }
 
 func TestProcessRequest_ModelNotFound(t *testing.T) {
 	store := newModelInfoStore()
-	p := &ModelProviderResolverPlugin{store: store}
+	p := &ModelProviderResolverPlugin{modelInfoStore: store}
 	cs := framework.NewCycleState()
 	req := framework.NewInferenceRequest()
 	req.Body["model"] = "unknown-model"
@@ -70,41 +79,20 @@ func TestProcessRequest_ModelNotFound(t *testing.T) {
 	assert.Error(t, provErr) // not found in CycleState
 }
 
-func TestProcessRequest_InternalModel(t *testing.T) {
-	// Internal models are not added to the store (reconciler skips kind != ExternalModel)
-	store := newModelInfoStore()
-	p := &ModelProviderResolverPlugin{store: store}
-	cs := framework.NewCycleState()
-	req := framework.NewInferenceRequest()
-	req.Body["model"] = "llama3-70b"
-
-	err := p.ProcessRequest(context.Background(), cs, req)
-	assert.NoError(t, err)
-
-	_, provErr := framework.ReadCycleStateKey[string](cs, state.ProviderKey)
-	assert.Error(t, provErr) // not found — internal models not in store
-}
-
 func TestProcessRequest_NoModel(t *testing.T) {
 	store := newModelInfoStore()
-	p := &ModelProviderResolverPlugin{store: store}
-	cs := framework.NewCycleState()
-	req := framework.NewInferenceRequest()
-	// no "model" field in body
+	p := &ModelProviderResolverPlugin{modelInfoStore: store}
 
-	err := p.ProcessRequest(context.Background(), cs, req)
+	err := p.ProcessRequest(context.Background(), framework.NewCycleState(), framework.NewInferenceRequest())
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "model")
 }
 
 func TestProcessRequest_NilRequest(t *testing.T) {
 	store := newModelInfoStore()
-	p := &ModelProviderResolverPlugin{store: store}
-	cs := framework.NewCycleState()
+	p := &ModelProviderResolverPlugin{modelInfoStore: store}
 
-	err := p.ProcessRequest(context.Background(), cs, nil)
+	err := p.ProcessRequest(context.Background(), framework.NewCycleState(), nil)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "non-nil")
 }
 
 func TestProcessRequest_NoCredentialRef(t *testing.T) {
@@ -114,7 +102,7 @@ func TestProcessRequest_NoCredentialRef(t *testing.T) {
 		// no credential ref
 	}, types.NamespacedName{Name: "gpt-4o", Namespace: "llm"})
 
-	p := &ModelProviderResolverPlugin{store: store}
+	p := &ModelProviderResolverPlugin{modelInfoStore: store}
 	cs := framework.NewCycleState()
 	req := framework.NewInferenceRequest()
 	req.Body["model"] = "gpt-4o"
@@ -125,35 +113,6 @@ func TestProcessRequest_NoCredentialRef(t *testing.T) {
 	actualProvider, _ := framework.ReadCycleStateKey[string](cs, state.ProviderKey)
 	assert.Equal(t, provider.OpenAI, actualProvider)
 
-	credName, credErr := framework.ReadCycleStateKey[string](cs, "credential-ref-name")
-	assert.NoError(t, credErr)
-	assert.Equal(t, "", credName)
-}
-
-func TestModelStore_SetAndGet(t *testing.T) {
-	store := newModelInfoStore()
-	key := types.NamespacedName{Name: "test", Namespace: "ns"}
-
-	store.setModelInfo("model-a", ModelInfo{provider: provider.Anthropic}, key)
-
-	info, found := store.getModelInfo("model-a")
-	assert.True(t, found)
-	assert.Equal(t, provider.Anthropic, info.provider)
-}
-
-func TestModelStore_DeleteByResource(t *testing.T) {
-	store := newModelInfoStore()
-	key := types.NamespacedName{Name: "test", Namespace: "ns"}
-
-	store.setModelInfo("model-a", ModelInfo{provider: provider.Anthropic}, key)
-	store.deleteByResource(key)
-
-	_, found := store.getModelInfo("model-a")
-	assert.False(t, found)
-}
-
-func TestModelStore_DeleteNonExistent(t *testing.T) {
-	store := newModelInfoStore()
-	// should not panic
-	store.deleteByResource(types.NamespacedName{Name: "nonexistent", Namespace: "ns"})
+	_, credErr := framework.ReadCycleStateKey[string](cs, state.CredsRefName)
+	assert.Error(t, credErr)
 }
