@@ -23,7 +23,7 @@ type Provider interface {
 	// TranslateRequest translates an OpenAI-format request body to the provider's native format.
 	// Returns the translated body, headers to set, headers to remove, and any error.
 	// A nil translatedBody means no body mutation is needed.
-	TranslateRequest(body map[string]any) (translatedBody map[string]any, headers map[string]string, headersToRemove []string, err error)
+	TranslateRequest(body map[string]any) (translatedBody map[string]any, headersToMutate map[string]string, headersToRemove []string, err error)
 
 	// TranslateResponse translates a provider-native response body back to OpenAI Chat Completions format.
 	// The model parameter is used to populate the model field in the OpenAI response.

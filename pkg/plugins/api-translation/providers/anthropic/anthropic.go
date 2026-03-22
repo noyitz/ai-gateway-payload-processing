@@ -86,9 +86,7 @@ func (p *AnthropicProvider) TranslateRequest(body map[string]any) (map[string]an
 		":path":             anthropicPath,
 	}
 
-	headersToRemove := []string{"authorization", "content-length"}
-
-	return translated, headers, headersToRemove, nil
+	return translated, headers, nil, nil
 }
 
 // TranslateResponse translates an Anthropic Messages API response to OpenAI Chat Completions format.
