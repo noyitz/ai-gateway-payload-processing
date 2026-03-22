@@ -63,6 +63,7 @@ func defaultInjectors() map[string]*apiKeyInjector {
 		provider.OpenAI:      {headerName: "Authorization", headerValuePrefix: "Bearer "},
 		provider.Anthropic:   {headerName: "x-api-key"},
 		provider.AzureOpenAI: {headerName: "api-key"},
+		provider.Vertex:      {headerName: "Authorization", headerValuePrefix: "Bearer "},
 	}
 }
 
