@@ -106,6 +106,79 @@ func TestProcessRequest_AnthropicProvider(t *testing.T) {
 	assert.Equal(t, "claude-sonnet-4-20250514", model)
 }
 
+func TestProcessRequest_AzureOpenAIProvider(t *testing.T) {
+	p := NewAPITranslationPlugin()
+
+	cs := newCycleStateWithProvider("azure-openai")
+	req := framework.NewInferenceRequest()
+	req.Headers["authorization"] = "Bearer sk-test"
+	req.Headers["content-length"] = "200"
+	req.Body["model"] = "gpt-4o"
+	req.Body["messages"] = []any{
+		map[string]any{"role": "system", "content": "Be concise"},
+		map[string]any{"role": "user", "content": "What is 2+2?"},
+	}
+	req.Body["max_tokens"] = float64(100)
+	req.Body["temperature"] = 0.7
+
+	err := p.ProcessRequest(context.Background(), cs, req)
+	require.NoError(t, err)
+
+	// Azure OpenAI does not mutate the body — same schema as OpenAI
+	assert.False(t, req.BodyMutated())
+
+	// Original body fields are preserved
+	assert.Equal(t, "gpt-4o", req.Body["model"])
+	assert.Equal(t, float64(100), req.Body["max_tokens"])
+	assert.Equal(t, 0.7, req.Body["temperature"])
+
+	mutated := req.MutatedHeaders()
+	assert.Equal(t, "/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21", mutated[":path"])
+	assert.Equal(t, "application/json", mutated["content-type"])
+
+	removed := req.RemovedHeaders()
+	assert.Contains(t, removed, "authorization")
+	assert.NotContains(t, removed, "content-length")
+
+	// Verify model stored in CycleState
+	model, err := framework.ReadCycleStateKey[string](cs, state.ModelKey)
+	assert.NoError(t, err)
+	assert.Equal(t, "gpt-4o", model)
+}
+
+func TestProcessResponse_AzureOpenAI(t *testing.T) {
+	p := NewAPITranslationPlugin()
+
+	cs := newCycleStateWithProvider("azure-openai")
+	cs.Write(state.ModelKey, "gpt-4o")
+
+	resp := framework.NewInferenceResponse()
+	resp.Body["id"] = "chatcmpl-abc123"
+	resp.Body["object"] = "chat.completion"
+	resp.Body["model"] = "gpt-4o"
+	resp.Body["choices"] = []any{
+		map[string]any{
+			"index": float64(0),
+			"message": map[string]any{
+				"role":    "assistant",
+				"content": "The answer is 4.",
+			},
+			"finish_reason": "stop",
+		},
+	}
+	resp.Body["usage"] = map[string]any{
+		"prompt_tokens":     float64(10),
+		"completion_tokens": float64(5),
+		"total_tokens":      float64(15),
+	}
+
+	err := p.ProcessResponse(context.Background(), cs, resp)
+	require.NoError(t, err)
+
+	// Azure OpenAI responses are already in OpenAI format — no mutation
+	assert.False(t, resp.BodyMutated())
+}
+
 func TestProcessRequest_UnknownProvider(t *testing.T) {
 	p := NewAPITranslationPlugin()
 
