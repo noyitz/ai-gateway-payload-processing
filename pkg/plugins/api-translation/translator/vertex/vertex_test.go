@@ -324,22 +324,76 @@ func TestTranslateRequest_OnlySystemMessage(t *testing.T) {
 	assert.Contains(t, err.Error(), "non-system message")
 }
 
-func TestTranslateRequest_ToolRoleRejected(t *testing.T) {
+func TestTranslateRequest_ToolRoleTranslated(t *testing.T) {
 	body := map[string]any{
 		"model": "gemini-2.5-flash",
 		"messages": []any{
-			map[string]any{"role": "user", "content": "Hi"},
-			map[string]any{"role": "tool", "content": "result", "tool_call_id": "abc"},
+			map[string]any{"role": "user", "content": "What's the weather?"},
+			map[string]any{
+				"role":    "assistant",
+				"content": "",
+				"tool_calls": []any{
+					map[string]any{
+						"id":   "call_abc",
+						"type": "function",
+						"function": map[string]any{
+							"name":      "get_weather",
+							"arguments": `{"location":"NYC"}`,
+						},
+					},
+				},
+			},
+			map[string]any{"role": "tool", "content": `{"temp": 72}`, "tool_call_id": "call_abc"},
 		},
 	}
 
-	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "tool")
-	assert.Contains(t, err.Error(), "not supported")
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	contents := translated["contents"].([]map[string]any)
+	require.Len(t, contents, 3)
+
+	// Assistant message with functionCall
+	assistantParts := contents[1]["parts"].([]map[string]any)
+	assert.Equal(t, "model", contents[1]["role"])
+	fc := assistantParts[0]["functionCall"].(map[string]any)
+	assert.Equal(t, "get_weather", fc["name"])
+	args := fc["args"].(map[string]any)
+	assert.Equal(t, "NYC", args["location"])
+
+	// Tool response as functionResponse
+	toolParts := contents[2]["parts"].([]map[string]any)
+	assert.Equal(t, "user", contents[2]["role"])
+	fr := toolParts[0]["functionResponse"].(map[string]any)
+	assert.Equal(t, "get_weather", fr["name"])
+	response := fr["response"].(map[string]any)
+	assert.Equal(t, float64(72), response["temp"])
 }
 
-func TestTranslateRequest_FunctionRoleRejected(t *testing.T) {
+func TestTranslateRequest_FunctionRoleTranslated(t *testing.T) {
+	body := map[string]any{
+		"model": "gemini-2.5-flash",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "Hello"},
+			map[string]any{"role": "function", "name": "get_time", "content": `{"time":"12:00"}`},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	contents := translated["contents"].([]map[string]any)
+	require.Len(t, contents, 2)
+
+	fnParts := contents[1]["parts"].([]map[string]any)
+	assert.Equal(t, "user", contents[1]["role"])
+	fr := fnParts[0]["functionResponse"].(map[string]any)
+	assert.Equal(t, "get_time", fr["name"])
+	response := fr["response"].(map[string]any)
+	assert.Equal(t, "12:00", response["time"])
+}
+
+func TestTranslateRequest_FunctionRoleMissingName(t *testing.T) {
 	body := map[string]any{
 		"model": "gemini-2.5-flash",
 		"messages": []any{
@@ -349,8 +403,7 @@ func TestTranslateRequest_FunctionRoleRejected(t *testing.T) {
 
 	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "function")
-	assert.Contains(t, err.Error(), "not supported")
+	assert.Contains(t, err.Error(), "missing name")
 }
 
 func TestTranslateRequest_UnknownRoleRejected(t *testing.T) {
@@ -385,7 +438,9 @@ func TestTranslateRequest_ContentParts(t *testing.T) {
 
 	contents := translated["contents"].([]map[string]any)
 	parts := contents[0]["parts"].([]map[string]any)
-	assert.Equal(t, "Hello World", parts[0]["text"])
+	require.Len(t, parts, 2)
+	assert.Equal(t, "Hello", parts[0]["text"])
+	assert.Equal(t, "World", parts[1]["text"])
 }
 
 func TestTranslateRequest_EmptyContentString(t *testing.T) {
@@ -428,7 +483,36 @@ func TestTranslateRequest_NoGenerationConfigWhenNoParams(t *testing.T) {
 	assert.False(t, hasConfig)
 }
 
-func TestTranslateRequest_NonTextContentSkipped(t *testing.T) {
+func TestTranslateRequest_ImageDataURI(t *testing.T) {
+	body := map[string]any{
+		"model": "gemini-2.5-flash",
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "Describe this image"},
+					map[string]any{"type": "image_url", "image_url": map[string]any{
+						"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+					}},
+				},
+			},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	contents := translated["contents"].([]map[string]any)
+	parts := contents[0]["parts"].([]map[string]any)
+	require.Len(t, parts, 2)
+	assert.Equal(t, "Describe this image", parts[0]["text"])
+
+	inlineData := parts[1]["inlineData"].(map[string]any)
+	assert.Equal(t, "image/png", inlineData["mimeType"])
+	assert.Equal(t, "iVBORw0KGgoAAAANSUhEUg==", inlineData["data"])
+}
+
+func TestTranslateRequest_ImageHTTPURLSkipped(t *testing.T) {
 	body := map[string]any{
 		"model": "gemini-2.5-flash",
 		"messages": []any{
@@ -447,6 +531,7 @@ func TestTranslateRequest_NonTextContentSkipped(t *testing.T) {
 
 	contents := translated["contents"].([]map[string]any)
 	parts := contents[0]["parts"].([]map[string]any)
+	require.Len(t, parts, 1)
 	assert.Equal(t, "Describe this", parts[0]["text"])
 }
 
@@ -511,6 +596,420 @@ func TestTranslateRequest_StopNonStringNonArray(t *testing.T) {
 
 	_, hasConfig := translated["generationConfig"]
 	assert.False(t, hasConfig)
+}
+
+// --- Tool definitions tests ---
+
+func TestTranslateRequest_ToolDefinitions(t *testing.T) {
+	body := map[string]any{
+		"model":    "gemini-2.5-flash",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+		"tools": []any{
+			map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name":        "get_weather",
+					"description": "Get weather for a location",
+					"parameters": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"location": map[string]any{"type": "string"},
+						},
+						"required": []any{"location"},
+					},
+				},
+			},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	tools := translated["tools"].([]map[string]any)
+	require.Len(t, tools, 1)
+
+	declarations := tools[0]["functionDeclarations"].([]map[string]any)
+	require.Len(t, declarations, 1)
+	assert.Equal(t, "get_weather", declarations[0]["name"])
+	assert.Equal(t, "Get weather for a location", declarations[0]["description"])
+	assert.NotNil(t, declarations[0]["parameters"])
+}
+
+func TestTranslateRequest_MultipleToolDefinitions(t *testing.T) {
+	body := map[string]any{
+		"model":    "gemini-2.5-flash",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+		"tools": []any{
+			map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name": "get_weather",
+				},
+			},
+			map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name": "get_time",
+				},
+			},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	tools := translated["tools"].([]map[string]any)
+	declarations := tools[0]["functionDeclarations"].([]map[string]any)
+	require.Len(t, declarations, 2)
+	assert.Equal(t, "get_weather", declarations[0]["name"])
+	assert.Equal(t, "get_time", declarations[1]["name"])
+}
+
+func TestTranslateRequest_NoToolsOmitted(t *testing.T) {
+	body := map[string]any{
+		"model":    "gemini-2.5-flash",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	_, hasTools := translated["tools"]
+	assert.False(t, hasTools)
+}
+
+func TestTranslateRequest_NonFunctionToolSkipped(t *testing.T) {
+	body := map[string]any{
+		"model":    "gemini-2.5-flash",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+		"tools": []any{
+			map[string]any{
+				"type": "code_interpreter",
+			},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	_, hasTools := translated["tools"]
+	assert.False(t, hasTools)
+}
+
+// --- tool_choice tests ---
+
+func TestTranslateRequest_ToolChoiceAuto(t *testing.T) {
+	body := map[string]any{
+		"model":       "gemini-2.5-flash",
+		"messages":    []any{map[string]any{"role": "user", "content": "Hi"}},
+		"tools":       []any{map[string]any{"type": "function", "function": map[string]any{"name": "fn"}}},
+		"tool_choice": "auto",
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	toolConfig := translated["toolConfig"].(map[string]any)
+	fcc := toolConfig["functionCallingConfig"].(map[string]any)
+	assert.Equal(t, "AUTO", fcc["mode"])
+}
+
+func TestTranslateRequest_ToolChoiceNone(t *testing.T) {
+	body := map[string]any{
+		"model":       "gemini-2.5-flash",
+		"messages":    []any{map[string]any{"role": "user", "content": "Hi"}},
+		"tool_choice": "none",
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	toolConfig := translated["toolConfig"].(map[string]any)
+	fcc := toolConfig["functionCallingConfig"].(map[string]any)
+	assert.Equal(t, "NONE", fcc["mode"])
+}
+
+func TestTranslateRequest_ToolChoiceRequired(t *testing.T) {
+	body := map[string]any{
+		"model":       "gemini-2.5-flash",
+		"messages":    []any{map[string]any{"role": "user", "content": "Hi"}},
+		"tools":       []any{map[string]any{"type": "function", "function": map[string]any{"name": "fn"}}},
+		"tool_choice": "required",
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	toolConfig := translated["toolConfig"].(map[string]any)
+	fcc := toolConfig["functionCallingConfig"].(map[string]any)
+	assert.Equal(t, "ANY", fcc["mode"])
+}
+
+func TestTranslateRequest_ToolChoiceSpecificFunction(t *testing.T) {
+	body := map[string]any{
+		"model":    "gemini-2.5-flash",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+		"tools":    []any{map[string]any{"type": "function", "function": map[string]any{"name": "get_weather"}}},
+		"tool_choice": map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": "get_weather"},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	toolConfig := translated["toolConfig"].(map[string]any)
+	fcc := toolConfig["functionCallingConfig"].(map[string]any)
+	assert.Equal(t, "ANY", fcc["mode"])
+	assert.Equal(t, []string{"get_weather"}, fcc["allowedFunctionNames"])
+}
+
+func TestTranslateRequest_NoToolChoiceOmitted(t *testing.T) {
+	body := map[string]any{
+		"model":    "gemini-2.5-flash",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	_, hasToolConfig := translated["toolConfig"]
+	assert.False(t, hasToolConfig)
+}
+
+// --- response_format tests ---
+
+func TestTranslateRequest_ResponseFormatJSON(t *testing.T) {
+	body := map[string]any{
+		"model":           "gemini-2.5-flash",
+		"messages":        []any{map[string]any{"role": "user", "content": "Hi"}},
+		"response_format": map[string]any{"type": "json_object"},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	config := translated["generationConfig"].(map[string]any)
+	assert.Equal(t, "application/json", config["responseMimeType"])
+}
+
+func TestTranslateRequest_ResponseFormatJSONSchema(t *testing.T) {
+	body := map[string]any{
+		"model":           "gemini-2.5-flash",
+		"messages":        []any{map[string]any{"role": "user", "content": "Hi"}},
+		"response_format": map[string]any{"type": "json_schema"},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	config := translated["generationConfig"].(map[string]any)
+	assert.Equal(t, "application/json", config["responseMimeType"])
+}
+
+func TestTranslateRequest_ResponseFormatText(t *testing.T) {
+	body := map[string]any{
+		"model":           "gemini-2.5-flash",
+		"messages":        []any{map[string]any{"role": "user", "content": "Hi"}},
+		"response_format": map[string]any{"type": "text"},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	_, hasConfig := translated["generationConfig"]
+	assert.False(t, hasConfig)
+}
+
+// --- Tool/function role message tests ---
+
+func TestTranslateRequest_ToolRoleNonJSONContent(t *testing.T) {
+	body := map[string]any{
+		"model": "gemini-2.5-flash",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "Hi"},
+			map[string]any{
+				"role":    "assistant",
+				"content": "",
+				"tool_calls": []any{
+					map[string]any{
+						"id":       "call_1",
+						"type":     "function",
+						"function": map[string]any{"name": "search", "arguments": `{}`},
+					},
+				},
+			},
+			map[string]any{"role": "tool", "content": "plain text result", "tool_call_id": "call_1"},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	contents := translated["contents"].([]map[string]any)
+	toolParts := contents[2]["parts"].([]map[string]any)
+	fr := toolParts[0]["functionResponse"].(map[string]any)
+	assert.Equal(t, "search", fr["name"])
+	response := fr["response"].(map[string]any)
+	assert.Equal(t, "plain text result", response["result"])
+}
+
+func TestTranslateRequest_ToolRoleUnknownCallID(t *testing.T) {
+	body := map[string]any{
+		"model": "gemini-2.5-flash",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "Hi"},
+			map[string]any{"role": "tool", "content": `{"data": 1}`, "tool_call_id": "unknown_id"},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	contents := translated["contents"].([]map[string]any)
+	toolParts := contents[1]["parts"].([]map[string]any)
+	fr := toolParts[0]["functionResponse"].(map[string]any)
+	assert.Equal(t, "unknown", fr["name"])
+}
+
+func TestTranslateRequest_MultipleToolCalls(t *testing.T) {
+	body := map[string]any{
+		"model": "gemini-2.5-flash",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "Get weather and time"},
+			map[string]any{
+				"role": "assistant",
+				"tool_calls": []any{
+					map[string]any{
+						"id":       "call_w",
+						"type":     "function",
+						"function": map[string]any{"name": "get_weather", "arguments": `{"city":"NYC"}`},
+					},
+					map[string]any{
+						"id":       "call_t",
+						"type":     "function",
+						"function": map[string]any{"name": "get_time", "arguments": `{"tz":"EST"}`},
+					},
+				},
+			},
+			map[string]any{"role": "tool", "content": `{"temp": 72}`, "tool_call_id": "call_w"},
+			map[string]any{"role": "tool", "content": `{"time": "12:00"}`, "tool_call_id": "call_t"},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	contents := translated["contents"].([]map[string]any)
+	require.Len(t, contents, 4)
+
+	// Assistant should have two functionCall parts
+	assistantParts := contents[1]["parts"].([]map[string]any)
+	require.Len(t, assistantParts, 2)
+	assert.NotNil(t, assistantParts[0]["functionCall"])
+	assert.NotNil(t, assistantParts[1]["functionCall"])
+
+	// Each tool response maps to the correct function name
+	fr1 := contents[2]["parts"].([]map[string]any)[0]["functionResponse"].(map[string]any)
+	assert.Equal(t, "get_weather", fr1["name"])
+
+	fr2 := contents[3]["parts"].([]map[string]any)[0]["functionResponse"].(map[string]any)
+	assert.Equal(t, "get_time", fr2["name"])
+}
+
+func TestTranslateRequest_AssistantWithTextAndToolCalls(t *testing.T) {
+	body := map[string]any{
+		"model": "gemini-2.5-flash",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "What's the weather?"},
+			map[string]any{
+				"role":    "assistant",
+				"content": "Let me check that for you.",
+				"tool_calls": []any{
+					map[string]any{
+						"id":       "call_1",
+						"type":     "function",
+						"function": map[string]any{"name": "get_weather", "arguments": `{}`},
+					},
+				},
+			},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	contents := translated["contents"].([]map[string]any)
+	assistantParts := contents[1]["parts"].([]map[string]any)
+	require.Len(t, assistantParts, 2)
+	assert.Equal(t, "Let me check that for you.", assistantParts[0]["text"])
+	assert.NotNil(t, assistantParts[1]["functionCall"])
+}
+
+// --- Multimodal tests ---
+
+func TestTranslateRequest_MultipleImageDataURIs(t *testing.T) {
+	body := map[string]any{
+		"model": "gemini-2.5-flash",
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "Compare these images"},
+					map[string]any{"type": "image_url", "image_url": map[string]any{
+						"url": "data:image/jpeg;base64,/9j/4AAQ==",
+					}},
+					map[string]any{"type": "image_url", "image_url": map[string]any{
+						"url": "data:image/webp;base64,UklGR==",
+					}},
+				},
+			},
+		},
+	}
+
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+
+	contents := translated["contents"].([]map[string]any)
+	parts := contents[0]["parts"].([]map[string]any)
+	require.Len(t, parts, 3)
+	assert.Equal(t, "Compare these images", parts[0]["text"])
+
+	img1 := parts[1]["inlineData"].(map[string]any)
+	assert.Equal(t, "image/jpeg", img1["mimeType"])
+
+	img2 := parts[2]["inlineData"].(map[string]any)
+	assert.Equal(t, "image/webp", img2["mimeType"])
+}
+
+func TestParseDataURI(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		wantMime string
+		wantData string
+		wantOK   bool
+	}{
+		{"valid png", "data:image/png;base64,abc123", "image/png", "abc123", true},
+		{"valid jpeg", "data:image/jpeg;base64,/9j/4A==", "image/jpeg", "/9j/4A==", true},
+		{"http url", "https://example.com/img.png", "", "", false},
+		{"no base64 prefix", "data:image/png;abc123", "", "", false},
+		{"empty mime", "data:;base64,abc123", "", "", false},
+		{"empty data", "data:image/png;base64,", "", "", false},
+		{"no semicolon", "data:image/pngbase64,abc", "", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mime, data, ok := parseDataURI(tt.url)
+			assert.Equal(t, tt.wantOK, ok)
+			if ok {
+				assert.Equal(t, tt.wantMime, mime)
+				assert.Equal(t, tt.wantData, data)
+			}
+		})
+	}
 }
 
 // --- Response translation tests ---
@@ -990,9 +1489,9 @@ func TestTranslateResponse_UnknownFieldsIgnored(t *testing.T) {
 	body := map[string]any{
 		"candidates": []any{
 			map[string]any{
-				"content":          map[string]any{"parts": []any{map[string]any{"text": "hi"}}, "role": "model"},
-				"finishReason":     "STOP",
-				"safetyRatings":    []any{map[string]any{"category": "HARM_CATEGORY_HARASSMENT", "probability": "NEGLIGIBLE"}},
+				"content":      map[string]any{"parts": []any{map[string]any{"text": "hi"}}, "role": "model"},
+				"finishReason": "STOP",
+				"safetyRatings": []any{map[string]any{"category": "HARM_CATEGORY_HARASSMENT", "probability": "NEGLIGIBLE"}},
 				"citationMetadata": map[string]any{},
 			},
 		},
