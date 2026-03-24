@@ -35,7 +35,7 @@ var _ translator.Translator = &VertexTranslator{}
 
 func NewVertexTranslator() *VertexTranslator {
 	return &VertexTranslator{
-		modelNamePattern: regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`), // modelNamePattern validates Gemini model names to prevent path injection.
+		modelNamePattern: regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`),
 	}
 }
 
@@ -86,6 +86,14 @@ func (t *VertexTranslator) TranslateRequest(body map[string]any) (map[string]any
 		translated["generationConfig"] = generationConfig
 	}
 
+	if tools := translateTools(body); len(tools) > 0 {
+		translated["tools"] = tools
+	}
+
+	if toolConfig := translateToolChoice(body); len(toolConfig) > 0 {
+		translated["toolConfig"] = toolConfig
+	}
+
 	// Use v1beta for systemInstruction support on the Generative Language API.
 	// The Vertex AI API (aiplatform.googleapis.com) supports systemInstruction in v1,
 	// but the Generative Language API (generativelanguage.googleapis.com) requires v1beta.
@@ -133,35 +141,134 @@ func (t *VertexTranslator) TranslateResponse(body map[string]any, model string) 
 
 // separateSystemMessages separates system/developer messages into systemInstruction
 // parts and converts the remaining messages into Vertex contents format.
+// It handles tool_calls in assistant messages and tool/function role messages.
 func separateSystemMessages(messages []map[string]any) ([]map[string]any, []map[string]any, error) {
 	var systemParts []map[string]any
 	var contents []map[string]any
 
+	// Maps tool_call_id to function name for correlating tool responses.
+	toolCallNames := map[string]string{}
+
 	for i, msg := range messages {
 		role, _ := msg["role"].(string)
-		content := extractContentString(msg)
 
 		switch role {
 		case "system", "developer":
+			content := extractContentString(msg)
 			systemParts = append(systemParts, map[string]any{"text": content})
+
 		case "user":
 			contents = append(contents, map[string]any{
 				"role":  "user",
-				"parts": []map[string]any{{"text": content}},
+				"parts": extractContentParts(msg),
 			})
+
 		case "assistant":
+			parts := buildAssistantParts(msg, toolCallNames)
 			contents = append(contents, map[string]any{
 				"role":  "model",
-				"parts": []map[string]any{{"text": content}},
+				"parts": parts,
 			})
-		case "tool", "function":
-			return nil, nil, fmt.Errorf("message at index %d has role '%s' which is not supported for Vertex translation", i, role)
+
+		case "tool":
+			toolCallID, _ := msg["tool_call_id"].(string)
+			fnName := toolCallNames[toolCallID]
+			if fnName == "" {
+				fnName = "unknown"
+			}
+
+			responseContent := extractContentString(msg)
+			var responseData any
+			if err := json.Unmarshal([]byte(responseContent), &responseData); err != nil {
+				responseData = map[string]any{"result": responseContent}
+			}
+
+			contents = append(contents, map[string]any{
+				"role": "user",
+				"parts": []map[string]any{{
+					"functionResponse": map[string]any{
+						"name":     fnName,
+						"response": responseData,
+					},
+				}},
+			})
+
+		case "function":
+			fnName, _ := msg["name"].(string)
+			if fnName == "" {
+				return nil, nil, fmt.Errorf("message at index %d has role \"function\" but missing name", i)
+			}
+
+			responseContent := extractContentString(msg)
+			var responseData any
+			if err := json.Unmarshal([]byte(responseContent), &responseData); err != nil {
+				responseData = map[string]any{"result": responseContent}
+			}
+
+			contents = append(contents, map[string]any{
+				"role": "user",
+				"parts": []map[string]any{{
+					"functionResponse": map[string]any{
+						"name":     fnName,
+						"response": responseData,
+					},
+				}},
+			})
+
 		default:
 			return nil, nil, fmt.Errorf("message at index %d has unknown role '%s'", i, role)
 		}
 	}
 
 	return systemParts, contents, nil
+}
+
+// buildAssistantParts builds Vertex parts for an assistant message, handling both
+// text content and tool_calls (converted to functionCall parts).
+func buildAssistantParts(msg map[string]any, toolCallNames map[string]string) []map[string]any {
+	var parts []map[string]any
+
+	content := extractContentString(msg)
+	if content != "" {
+		parts = append(parts, map[string]any{"text": content})
+	}
+
+	if toolCallsRaw, ok := msg["tool_calls"].([]any); ok {
+		for _, raw := range toolCallsRaw {
+			tc, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			fn, ok := tc["function"].(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := fn["name"].(string)
+			argsStr, _ := fn["arguments"].(string)
+
+			if id, ok := tc["id"].(string); ok && id != "" {
+				toolCallNames[id] = name
+			}
+
+			var args any
+			if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
+				args = map[string]any{}
+			}
+
+			parts = append(parts, map[string]any{
+				"functionCall": map[string]any{
+					"name": name,
+					"args": args,
+				},
+			})
+		}
+	}
+
+	if len(parts) == 0 {
+		parts = append(parts, map[string]any{"text": ""})
+	}
+
+	return parts
 }
 
 // buildGenerationConfig constructs the Vertex generationConfig from OpenAI parameters.
@@ -181,6 +288,12 @@ func buildGenerationConfig(body map[string]any) map[string]any {
 	}
 	if stop := extractStopSequences(body); len(stop) > 0 {
 		config["stopSequences"] = stop
+	}
+
+	if rf, ok := body["response_format"].(map[string]any); ok {
+		if rfType, _ := rf["type"].(string); rfType == "json_object" || rfType == "json_schema" {
+			config["responseMimeType"] = "application/json"
+		}
 	}
 
 	return config
@@ -337,6 +450,85 @@ func translateVertexError(errObj map[string]any) map[string]any {
 	}
 }
 
+// translateTools converts OpenAI tools[] to Vertex tools[].function_declarations.
+func translateTools(body map[string]any) []map[string]any {
+	toolsRaw, ok := body["tools"].([]any)
+	if !ok || len(toolsRaw) == 0 {
+		return nil
+	}
+
+	var declarations []map[string]any
+	for _, raw := range toolsRaw {
+		tool, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		toolType, _ := tool["type"].(string)
+		if toolType != "function" {
+			continue
+		}
+		fn, ok := tool["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+
+		decl := map[string]any{}
+		if name, ok := fn["name"].(string); ok {
+			decl["name"] = name
+		}
+		if desc, ok := fn["description"].(string); ok {
+			decl["description"] = desc
+		}
+		if params, ok := fn["parameters"]; ok && params != nil {
+			decl["parameters"] = params
+		}
+		declarations = append(declarations, decl)
+	}
+
+	if len(declarations) == 0 {
+		return nil
+	}
+
+	return []map[string]any{
+		{"functionDeclarations": declarations},
+	}
+}
+
+// translateToolChoice converts OpenAI tool_choice to Vertex toolConfig.functionCallingConfig.
+func translateToolChoice(body map[string]any) map[string]any {
+	tc, ok := body["tool_choice"]
+	if !ok {
+		return nil
+	}
+
+	if s, ok := tc.(string); ok {
+		switch s {
+		case "auto":
+			return map[string]any{"functionCallingConfig": map[string]any{"mode": "AUTO"}}
+		case "none":
+			return map[string]any{"functionCallingConfig": map[string]any{"mode": "NONE"}}
+		case "required":
+			return map[string]any{"functionCallingConfig": map[string]any{"mode": "ANY"}}
+		}
+		return nil
+	}
+
+	if obj, ok := tc.(map[string]any); ok {
+		if fn, ok := obj["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok && name != "" {
+				return map[string]any{
+					"functionCallingConfig": map[string]any{
+						"mode":                  "ANY",
+						"allowedFunctionNames": []string{name},
+					},
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 // --- Helper functions ---
 
 func extractMessages(body map[string]any) ([]map[string]any, error) {
@@ -362,6 +554,7 @@ func extractMessages(body map[string]any) ([]map[string]any, error) {
 	return messages, nil
 }
 
+// extractContentString extracts only text content from a message (used for system instructions).
 func extractContentString(msg map[string]any) string {
 	content, ok := msg["content"]
 	if !ok {
@@ -385,6 +578,82 @@ func extractContentString(msg map[string]any) string {
 	}
 
 	return ""
+}
+
+// extractContentParts converts OpenAI message content (string or array of parts)
+// into Vertex AI parts, supporting both text and image_url (data URI) content.
+func extractContentParts(msg map[string]any) []map[string]any {
+	content, ok := msg["content"]
+	if !ok {
+		return []map[string]any{{"text": ""}}
+	}
+
+	if s, ok := content.(string); ok {
+		return []map[string]any{{"text": s}}
+	}
+
+	if parts, ok := content.([]any); ok {
+		var vertexParts []map[string]any
+		for _, part := range parts {
+			partMap, ok := part.(map[string]any)
+			if !ok {
+				continue
+			}
+			partType, _ := partMap["type"].(string)
+
+			switch partType {
+			case "text":
+				if text, ok := partMap["text"].(string); ok {
+					vertexParts = append(vertexParts, map[string]any{"text": text})
+				}
+			case "image_url":
+				if imgObj, ok := partMap["image_url"].(map[string]any); ok {
+					if url, ok := imgObj["url"].(string); ok {
+						if mimeType, data, ok := parseDataURI(url); ok {
+							vertexParts = append(vertexParts, map[string]any{
+								"inlineData": map[string]any{
+									"mimeType": mimeType,
+									"data":     data,
+								},
+							})
+						}
+					}
+				}
+			}
+		}
+		if len(vertexParts) == 0 {
+			return []map[string]any{{"text": ""}}
+		}
+		return vertexParts
+	}
+
+	return []map[string]any{{"text": ""}}
+}
+
+// parseDataURI parses a data URI (e.g., "data:image/png;base64,iVBOR...") and returns
+// the MIME type, base64 data, and whether parsing succeeded.
+func parseDataURI(url string) (mimeType string, data string, ok bool) {
+	if !strings.HasPrefix(url, "data:") {
+		return "", "", false
+	}
+
+	rest := url[len("data:"):]
+	semicolonIdx := strings.Index(rest, ";")
+	if semicolonIdx < 0 {
+		return "", "", false
+	}
+	mimeType = rest[:semicolonIdx]
+
+	rest = rest[semicolonIdx+1:]
+	if !strings.HasPrefix(rest, "base64,") {
+		return "", "", false
+	}
+	data = rest[len("base64,"):]
+
+	if mimeType == "" || data == "" {
+		return "", "", false
+	}
+	return mimeType, data, true
 }
 
 func resolveMaxTokens(body map[string]any) int {
