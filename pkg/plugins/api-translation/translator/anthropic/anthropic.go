@@ -85,6 +85,13 @@ func (t *AnthropicTranslator) TranslateRequest(body map[string]any) (map[string]
 		translated["stop_sequences"] = stop
 	}
 
+	if tools := translateToolDefinitions(body); len(tools) > 0 {
+		translated["tools"] = tools
+		if toolChoice := translateToolChoice(body); toolChoice != nil {
+			translated["tool_choice"] = toolChoice
+		}
+	}
+
 	headers := map[string]string{
 		"anthropic-version": anthropicAPIVersion,
 		"content-type":      "application/json",
@@ -166,36 +173,153 @@ func translateAnthropicError(body map[string]any) map[string]any {
 // separateSystemMessages extracts the system prompt and returns non-system messages
 // in Anthropic format (with role and content fields).
 // Maps OpenAI "developer" role to Anthropic system prompt (concatenated with "system").
-// Returns an error for unsupported roles like "tool" or "function".
+// Translates "tool" role messages to Anthropic "tool_result" content blocks in a "user" message.
+// Translates assistant messages with "tool_calls" to Anthropic "tool_use" content blocks.
 func separateSystemMessages(messages []map[string]any) (string, []map[string]any, error) {
 	var systemParts []string
 	var anthropicMessages []map[string]any
 
 	for i, msg := range messages {
 		role, _ := msg["role"].(string)
-		content := extractContentString(msg)
 
 		switch role {
 		case "system", "developer":
+			content := extractContentString(msg)
 			systemParts = append(systemParts, content)
 		case "user":
+			content := extractContentString(msg)
 			anthropicMessages = append(anthropicMessages, map[string]any{
 				"role":    "user",
 				"content": content,
 			})
 		case "assistant":
-			anthropicMessages = append(anthropicMessages, map[string]any{
-				"role":    "assistant",
-				"content": content,
-			})
-		case "tool", "function":
-			return "", nil, fmt.Errorf("message at index %d has role '%s' which is not supported for Anthropic translation", i, role)
+			anthropicMessages = append(anthropicMessages, buildAssistantMessage(msg))
+		case "tool":
+			toolResultMsg, err := buildToolResultMessage(msg)
+			if err != nil {
+				return "", nil, fmt.Errorf("message at index %d: %w", i, err)
+			}
+			anthropicMessages = appendToolResult(anthropicMessages, toolResultMsg)
 		default:
 			return "", nil, fmt.Errorf("message at index %d has unknown role '%s'", i, role)
 		}
 	}
 
 	return joinStrings(systemParts, "\n"), anthropicMessages, nil
+}
+
+// buildAssistantMessage converts an OpenAI assistant message to Anthropic format.
+// If the message has tool_calls, they are translated to Anthropic tool_use content blocks.
+func buildAssistantMessage(msg map[string]any) map[string]any {
+	toolCalls, hasToolCalls := msg["tool_calls"].([]any)
+	if !hasToolCalls || len(toolCalls) == 0 {
+		return map[string]any{
+			"role":    "assistant",
+			"content": extractContentString(msg),
+		}
+	}
+
+	var contentBlocks []any
+
+	// Add text content block if present
+	if text := extractContentString(msg); text != "" {
+		contentBlocks = append(contentBlocks, map[string]any{
+			"type": "text",
+			"text": text,
+		})
+	}
+
+	// Convert each OpenAI tool_call to an Anthropic tool_use block
+	for _, tc := range toolCalls {
+		tcMap, ok := tc.(map[string]any)
+		if !ok {
+			continue
+		}
+		toolUse := translateToolCallToToolUse(tcMap)
+		if toolUse != nil {
+			contentBlocks = append(contentBlocks, toolUse)
+		}
+	}
+
+	return map[string]any{
+		"role":    "assistant",
+		"content": contentBlocks,
+	}
+}
+
+// translateToolCallToToolUse converts an OpenAI tool_call object to an Anthropic tool_use content block.
+func translateToolCallToToolUse(toolCall map[string]any) map[string]any {
+	id, _ := toolCall["id"].(string)
+	fn, ok := toolCall["function"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	name, _ := fn["name"].(string)
+
+	// Parse arguments from JSON string to map
+	var input any
+	if argsStr, ok := fn["arguments"].(string); ok {
+		var parsed any
+		if err := json.Unmarshal([]byte(argsStr), &parsed); err == nil {
+			input = parsed
+		} else {
+			input = map[string]any{}
+		}
+	} else {
+		// Already a map (e.g., from in-memory representation)
+		input = fn["arguments"]
+		if input == nil {
+			input = map[string]any{}
+		}
+	}
+
+	return map[string]any{
+		"type":  "tool_use",
+		"id":    id,
+		"name":  name,
+		"input": input,
+	}
+}
+
+// buildToolResultMessage converts an OpenAI "tool" role message to an Anthropic
+// "tool_result" content block wrapped in a "user" message.
+func buildToolResultMessage(msg map[string]any) (map[string]any, error) {
+	toolCallID, _ := msg["tool_call_id"].(string)
+	if toolCallID == "" {
+		return nil, fmt.Errorf("tool message missing required 'tool_call_id' field")
+	}
+
+	content := extractContentString(msg)
+
+	toolResult := map[string]any{
+		"type":        "tool_result",
+		"tool_use_id": toolCallID,
+	}
+	if content != "" {
+		toolResult["content"] = content
+	}
+
+	return toolResult, nil
+}
+
+// appendToolResult appends a tool_result content block to the message list.
+// If the last message is already a "user" message with content blocks (from a previous
+// tool result), the new block is merged into it. This handles the common pattern of
+// multiple consecutive tool results that Anthropic expects in a single user message.
+func appendToolResult(messages []map[string]any, toolResult map[string]any) []map[string]any {
+	if len(messages) > 0 {
+		last := messages[len(messages)-1]
+		if role, _ := last["role"].(string); role == "user" {
+			if blocks, ok := last["content"].([]any); ok {
+				last["content"] = append(blocks, toolResult)
+				return messages
+			}
+		}
+	}
+	return append(messages, map[string]any{
+		"role":    "user",
+		"content": []any{toolResult},
+	})
 }
 
 // extractMessages extracts the messages array from the request body.
@@ -385,6 +509,79 @@ func mapAnthropicUsage(body map[string]any) map[string]any {
 		"completion_tokens": outputTokens,
 		"total_tokens":      inputTokens + outputTokens,
 	}
+}
+
+// translateToolDefinitions converts OpenAI tools[] to Anthropic tools[] format.
+// OpenAI: {"type":"function","function":{"name":"X","description":"Y","parameters":{...}}}
+// Anthropic: {"name":"X","description":"Y","input_schema":{...}}
+func translateToolDefinitions(body map[string]any) []any {
+	tools, ok := body["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		return nil
+	}
+
+	var anthropicTools []any
+	for _, tool := range tools {
+		toolMap, ok := tool.(map[string]any)
+		if !ok {
+			continue
+		}
+		fn, ok := toolMap["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+
+		anthropicTool := map[string]any{
+			"name": fn["name"],
+		}
+		if desc, ok := fn["description"].(string); ok && desc != "" {
+			anthropicTool["description"] = desc
+		}
+		if params, ok := fn["parameters"]; ok && params != nil {
+			anthropicTool["input_schema"] = params
+		} else {
+			// Anthropic requires input_schema; default to empty object schema
+			anthropicTool["input_schema"] = map[string]any{"type": "object"}
+		}
+
+		anthropicTools = append(anthropicTools, anthropicTool)
+	}
+
+	return anthropicTools
+}
+
+// translateToolChoice converts OpenAI tool_choice to Anthropic tool_choice format.
+// OpenAI "auto" → Anthropic {"type":"auto"}
+// OpenAI "required" → Anthropic {"type":"any"}
+// OpenAI "none" → Anthropic: omitted (return nil)
+// OpenAI {"type":"function","function":{"name":"X"}} → Anthropic {"type":"tool","name":"X"}
+func translateToolChoice(body map[string]any) map[string]any {
+	toolChoice, ok := body["tool_choice"]
+	if !ok {
+		return nil
+	}
+
+	if s, ok := toolChoice.(string); ok {
+		switch s {
+		case "auto":
+			return map[string]any{"type": "auto"}
+		case "required":
+			return map[string]any{"type": "any"}
+		default:
+			// "none" or unknown — omit tool_choice, letting Anthropic use default behavior
+			return nil
+		}
+	}
+
+	if tcMap, ok := toolChoice.(map[string]any); ok {
+		if fn, ok := tcMap["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok {
+				return map[string]any{"type": "tool", "name": name}
+			}
+		}
+	}
+
+	return nil
 }
 
 // Helper functions for type-safe extraction from map[string]any
