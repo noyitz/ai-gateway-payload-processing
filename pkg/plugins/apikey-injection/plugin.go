@@ -140,8 +140,8 @@ func (p *ApiKeyInjectionPlugin) ProcessRequest(ctx context.Context, cycleState *
 
 	// Check if this is an external model (provider set by provider-resolver).
 	// Internal models have no provider in CycleState and don't need API key injection.
-	providerName, _ := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey)
-	if providerName == "" {
+	providerName, err := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey)
+	if err != nil || providerName == "" {
 		return nil
 	}
 
