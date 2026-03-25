@@ -27,29 +27,31 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// maasModelRefReconciler watches MaaSModelRef CRDs (via unstructured client)
+// externalModelReconciler watches ExternalModel CRDs (via unstructured client)
 // and updates the model store with provider and credential information.
-type maasModelRefReconciler struct {
+type externalModelReconciler struct {
 	client.Reader
 	store *modelInfoStore
 }
 
-// Reconcile handles create/update/delete events for MaaSModelRef resources.
-func (r *maasModelRefReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// Reconcile handles create/update/delete events for ExternalModel resources.
+// The ExternalModel CR name is used as the model key in the store, matching
+// the model name in inference request bodies.
+func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Reconciling MaaSModelRef", "name", req.Name, "namespace", req.Namespace)
+	logger.Info("Reconciling ExternalModel", "name", req.Name, "namespace", req.Namespace)
 
 	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(maasModelRefGVK)
+	obj.SetGroupVersionKind(externalModelGVK)
 
 	err := r.Get(ctx, req.NamespacedName, obj)
 	if errors.IsNotFound(err) {
 		r.store.deleteByResource(req.NamespacedName)
-		logger.Info("MaaSModelRef deleted, cleaned store", "name", req.Name)
+		logger.Info("ExternalModel deleted, cleaned store", "name", req.Name)
 		return ctrl.Result{}, nil
 	}
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("unable to get MaaSModelRef: %w", err)
+		return ctrl.Result{}, fmt.Errorf("unable to get ExternalModel: %w", err)
 	}
 
 	if !obj.GetDeletionTimestamp().IsZero() {
@@ -57,16 +59,10 @@ func (r *maasModelRefReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
-	// Extract spec.modelRef fields
-	kind, _, _ := unstructured.NestedString(obj.Object, "spec", "modelRef", "kind")
-	if kind != "ExternalModel" {
-		return ctrl.Result{}, nil
-	}
-
-	modelName, _, _ := unstructured.NestedString(obj.Object, "spec", "modelRef", "name")
-	provider, _, _ := unstructured.NestedString(obj.Object, "spec", "modelRef", "provider")
+	provider, _, _ := unstructured.NestedString(obj.Object, "spec", "provider")
 	if provider == "" {
-		logger.Info("MaaSModelRef ExternalModel missing provider, skipping", "name", req.Name)
+		logger.Info("ExternalModel missing provider, skipping", "name", req.Name)
+		r.store.deleteByResource(req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
 
@@ -74,7 +70,7 @@ func (r *maasModelRefReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		provider: provider,
 	}
 
-	// Extract spec.credentialRef if present
+	// Extract credentialRef
 	credName, _, _ := unstructured.NestedString(obj.Object, "spec", "credentialRef", "name")
 	credNS, _, _ := unstructured.NestedString(obj.Object, "spec", "credentialRef", "namespace")
 	if credName != "" {
@@ -85,8 +81,9 @@ func (r *maasModelRefReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	r.store.setModelInfo(modelName, info, req.NamespacedName)
-	logger.Info("Updated model store", "model", modelName, "provider", provider)
+	// ExternalModel name = model key (matches the model name in request body)
+	r.store.setModelInfo(req.Name, info, req.NamespacedName)
+	logger.Info("Updated model store", "model", req.Name, "provider", provider)
 
 	return ctrl.Result{}, nil
 }
