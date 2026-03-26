@@ -31,6 +31,7 @@ import (
 
 	api_translation "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation"
 	apikey_injection "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/apikey-injection"
+	sigv4_signer "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/aws-sigv4-signer"
 	provider_resolver "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/model-provider-resolver"
 )
 
@@ -50,4 +51,5 @@ func registerPlugins() {
 	framework.Register(provider_resolver.ModelProviderResolverPluginType, provider_resolver.ModelProviderResolverFactory)
 	framework.Register(api_translation.APITranslationPluginType, api_translation.APITranslationFactory)
 	framework.Register(apikey_injection.APIKeyInjectionPluginType, apikey_injection.APIKeyInjectionFactory)
+	framework.Register(sigv4_signer.AWSSigV4SignerPluginType, sigv4_signer.AWSSigV4SignerFactory)
 }
