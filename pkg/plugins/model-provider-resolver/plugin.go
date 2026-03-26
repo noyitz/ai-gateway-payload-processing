@@ -36,11 +36,11 @@ const (
 	ModelProviderResolverPluginType = "model-provider-resolver"
 )
 
-// maasModelRefGVK is the GroupVersionKind for MaaSModelRef CRD.
-var maasModelRefGVK = schema.GroupVersionKind{
+// externalModelGVK is the GroupVersionKind for ExternalModel CRD.
+var externalModelGVK = schema.GroupVersionKind{
 	Group:   "maas.opendatahub.io",
 	Version: "v1alpha1",
-	Kind:    "MaaSModelRef",
+	Kind:    "ExternalModel",
 }
 
 // compile-time type validation
@@ -58,17 +58,17 @@ func ModelProviderResolverFactory(name string, _ json.RawMessage, handle framewo
 
 func NewModelProviderResolver(reconcilerBuilder func() *builder.Builder, clientReader client.Reader) (*ModelProviderResolverPlugin, error) {
 	modelInfoStore := newModelInfoStore()
-	reconciler := &maasModelRefReconciler{
+	reconciler := &externalModelReconciler{
 		Reader: clientReader,
 		store:  modelInfoStore,
 	}
 
-	// Watch MaaSModelRef CRDs using unstructured client (no MaaS type dependency)
+	// Watch ExternalModel CRDs directly (no MaaSModelRef dependency)
 	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(maasModelRefGVK)
+	obj.SetGroupVersionKind(externalModelGVK)
 
 	if err := reconcilerBuilder().For(obj).Complete(reconciler); err != nil {
-		return nil, fmt.Errorf("failed to register MaaSModelRef reconciler for plugin '%s' - %w", ModelProviderResolverPluginType, err)
+		return nil, fmt.Errorf("failed to register ExternalModel reconciler for plugin '%s' - %w", ModelProviderResolverPluginType, err)
 	}
 
 	return &ModelProviderResolverPlugin{
@@ -77,7 +77,7 @@ func NewModelProviderResolver(reconcilerBuilder func() *builder.Builder, clientR
 	}, nil
 }
 
-// ModelProviderResolverPlugin resolves model names to provider info by watching MaaSModelRef CRDs.
+// ModelProviderResolverPlugin resolves model names to provider info by watching ExternalModel CRDs.
 // It writes the model, provider and credential reference to CycleState for downstream plugins
 // (api-translation, api-key-injection).
 type ModelProviderResolverPlugin struct {
@@ -97,7 +97,7 @@ func (p *ModelProviderResolverPlugin) WithName(name string) *ModelProviderResolv
 }
 
 // ProcessRequest reads the model name from the request body, resolves the provider
-// from the modelInfoStore (populated by MaaSModelRef reconciler), and writes model, provider
+// from the modelInfoStore (populated by ExternalModel reconciler), and writes model, provider
 // and credential reference info to CycleState.
 func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleState *framework.CycleState, request *framework.InferenceRequest) error {
 	if request == nil || request.Headers == nil || request.Body == nil {
