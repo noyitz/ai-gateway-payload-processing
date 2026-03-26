@@ -91,14 +91,7 @@ func TestProcessRequest(t *testing.T) {
 				"Authorization": "Bearer vtx-key-456",
 			},
 		},
-		{
-			name:       "unknown provider — falls back to OpenAI Bearer format",
-			secrets:    []*corev1.Secret{testSecret("default", "no-provider", "sk-key")},
-			cycleState: newCycleState("default", "no-provider", "some-unknown-provider"),
-			wantHeaders: map[string]string{
-				"Authorization": "Bearer sk-key",
-			},
-		},
+		// unknown providers are skipped (not in generators map) — handled by TestProcessRequest_UnknownProvider_Skips
 	}
 
 	for _, tt := range tests {
@@ -158,7 +151,7 @@ func TestProcessRequestUnknownProviderFallback(t *testing.T) {
 
 	err := p.ProcessRequest(context.Background(), cs, req)
 	require.NoError(t, err)
-	assert.Equal(t, "Bearer key-789", req.Headers["Authorization"])
+	assert.Empty(t, req.Headers["Authorization"], "unknown provider should be skipped")
 }
 
 func TestProcessRequestNilRequest(t *testing.T) {
@@ -209,7 +202,7 @@ func TestDefaultInjectors(t *testing.T) {
 	assert.Equal(t, "Authorization", injectors[provider.Vertex].headerName)
 	assert.Equal(t, "Bearer ", injectors[provider.Vertex].headerValuePrefix)
 
-	assert.Len(t, injectors, 5)
+	assert.Len(t, injectors, 4) // Bedrock uses SigV4 signing, not API key injection
 }
 
 func TestAPIKeyInjector(t *testing.T) {

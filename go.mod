@@ -3,6 +3,7 @@ module github.com/opendatahub-io/ai-gateway-payload-processing
 go 1.25.0
 
 require (
+	github.com/aws/aws-sdk-go-v2 v1.41.4
 	github.com/stretchr/testify v1.11.1
 	k8s.io/api v0.35.2
 	k8s.io/apimachinery v0.35.2
@@ -13,6 +14,7 @@ require (
 require (
 	cel.dev/expr v0.25.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
+	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect

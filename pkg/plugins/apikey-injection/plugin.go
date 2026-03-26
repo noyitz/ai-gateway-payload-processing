@@ -22,9 +22,11 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/framework/interface/plugin"
 
@@ -60,11 +62,10 @@ func (inj *apiKeyGenerator) generateHeader(apiKey string) (string, string) {
 // defaultApiKeyGenerators returns the built-in provider-to-generator registry.
 func defaultApiKeyGenerators() map[string]*apiKeyGenerator {
 	return map[string]*apiKeyGenerator{
-		provider.OpenAI:        {headerName: "Authorization", headerValuePrefix: "Bearer "},
-		provider.Anthropic:     {headerName: "x-api-key"},
-		provider.AzureOpenAI:   {headerName: "api-key"},
-		provider.Vertex:        {headerName: "Authorization", headerValuePrefix: "Bearer "},
-		provider.BedrockOpenAI: {headerName: "Authorization"}, // TODO THIS IS NOT WORKING
+		provider.OpenAI:      {headerName: "Authorization", headerValuePrefix: "Bearer "},
+		provider.Anthropic:   {headerName: "x-api-key"},
+		provider.AzureOpenAI: {headerName: "api-key"},
+		provider.Vertex:      {headerName: "Authorization", headerValuePrefix: "Bearer "},
 	}
 }
 
@@ -87,7 +88,14 @@ func NewAPIKeyInjectionPlugin(reconcilerBuilder func() *builder.Builder, clientR
 		store:  store,
 	}
 
-	if err := reconcilerBuilder().For(&corev1.Secret{}).WithEventFilter(managedLabelPredicate()).Complete(reconciler); err != nil {
+	labelPredicate, err := predicate.LabelSelectorPredicate(metav1.LabelSelector{
+		MatchLabels: map[string]string{managedLabel: "true"},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build label predicate for plugin '%s' - %w", APIKeyInjectionPluginType, err)
+	}
+
+	if err := reconcilerBuilder().For(&corev1.Secret{}).WithEventFilter(labelPredicate).Complete(reconciler); err != nil {
 		return nil, fmt.Errorf("failed to register Secret reconciler for plugin '%s' - %w", APIKeyInjectionPluginType, err)
 	}
 
@@ -130,11 +138,15 @@ func (p *ApiKeyInjectionPlugin) ProcessRequest(ctx context.Context, cycleState *
 		return fmt.Errorf("request or headers is nil")
 	}
 
-	// Check if this is an external model (provider set by provider-resolver).
-	// Internal models have no provider in CycleState and don't need API key injection.
-	providerName, err := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey)
-	if err != nil || providerName == "" {
+	// Check if this is a provider that needs API key injection.
+	// Skip if: no provider (internal model) or provider not in generators map
+	// (e.g., aws-bedrock uses SigV4 signing instead of API key injection).
+	providerName, _ := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey)
+	if providerName == "" {
 		return nil
+	}
+	if _, hasGenerator := p.apikeyGenerators[providerName]; !hasGenerator {
+		return nil // provider uses a different auth mechanism (e.g., SigV4)
 	}
 
 	credsName, err := framework.ReadCycleStateKey[string](cycleState, state.CredsRefName)
