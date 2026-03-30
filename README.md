@@ -37,7 +37,8 @@ if you're running this repo as a standalone, you need to deploy the CRD before r
     helm install payload-processing ./deploy/payload-processing \
     --namespace ${GATEWAY_NAMESPACE} \
     --dependency-update \
-    --set upstreamBbr.inferenceGateway.name=${GATEWAY_NAME}
+    --set upstreamBbr.inferenceGateway.name=${GATEWAY_NAME} \
+    --set upstreamBbr.provider.istio.envoyFilter.anchorSubFilter=extensions.istio.io/wasmplugin/${GATEWAY_NAMESPACE}.kuadrant-${GATEWAY_NAME}
     ```
 
     > **Important**: The payload processing ext proc is attached to a Gateway.
