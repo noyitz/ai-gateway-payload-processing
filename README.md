@@ -34,10 +34,13 @@ if you're running this repo as a standalone, you need to deploy the CRD before r
 1.  Install `payload-processing` helm chart:
 
     ```bash
+    export ANCHOR_FILTER="extensions.istio.io/wasmplugin/${GATEWAY_NAMESPACE}.kuadrant-${GATEWAY_NAME}"
+
     helm install payload-processing ./deploy/payload-processing \
     --namespace ${GATEWAY_NAMESPACE} \
     --dependency-update \
-    --set upstreamBbr.inferenceGateway.name=${GATEWAY_NAME}
+    --set upstreamBbr.inferenceGateway.name=${GATEWAY_NAME} \
+    --set upstreamBbr.provider.istio.envoyFilter.anchorSubFilter=${ANCHOR_FILTER}
     ```
 
     > **Important**: The payload processing ext proc is attached to a Gateway.
