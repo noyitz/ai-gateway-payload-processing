@@ -1,0 +1,19 @@
+{{- $bbr := .Values.upstreamBbr.bbr }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $bbr.name }}-allow-grpc
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $bbr.name }}
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+    - port: {{ $bbr.port }}
+      protocol: TCP
+    - port: {{ $bbr.healthCheckPort }}
+      protocol: TCP
