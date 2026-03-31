@@ -103,6 +103,14 @@ test-unit: envtest ## Run unit tests. Optional: COVERAGE=true (or 1) for go tool
 	fi; \
 	rm -f cover.out
 
+.PHONY: test-e2e
+test-e2e: ## Run E2E tests (requires cluster with Istio + BBR deployed).
+	go test ./test/e2e/ -v -ginkgo.v -count=1 -timeout=10m
+
+.PHONY: test-e2e-setup
+test-e2e-setup: ## Set up Kind cluster with Istio and BBR for E2E testing.
+	./test/e2e/scripts/setup-kind.sh
+
 .PHONY: test
 test: test-unit ## Run unit tests (alias for test-unit).
 
