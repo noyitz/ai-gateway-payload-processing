@@ -155,11 +155,11 @@ func getCurlCommand(modelName string) []string {
 }
 
 var _ = ginkgo.Describe("BBR Plugin Chain", ginkgo.Label("e2e"), func() {
-	ginkgo.When("BBR is deployed with all plugins", ginkgo.Label("smoke", "sanity", "tier1"), func() {
+	ginkgo.When("BBR is deployed with all plugins", ginkgo.Label("tier1"), func() {
 		for _, p := range providers {
 			p := p // capture range variable
 
-			ginkgo.It(fmt.Sprintf("should return 200 for provider %s", p.Provider), func() {
+			ginkgo.It(fmt.Sprintf("should return 200 for provider %s", p.Provider), ginkgo.Label("smoke", "sanity"), func() {
 				curlCmd := getCurlCommand(p.Name)
 
 				var resp string
