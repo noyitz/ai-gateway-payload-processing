@@ -154,8 +154,8 @@ func getCurlCommand(modelName string) []string {
 	}
 }
 
-var _ = ginkgo.Describe("BBR Plugin Chain", func() {
-	ginkgo.When("BBR is deployed with all plugins", func() {
+var _ = ginkgo.Describe("BBR Plugin Chain", ginkgo.Label("e2e"), func() {
+	ginkgo.When("BBR is deployed with all plugins", ginkgo.Label("smoke", "sanity", "tier1"), func() {
 		for _, p := range providers {
 			p := p // capture range variable
 
@@ -208,7 +208,7 @@ var _ = ginkgo.Describe("BBR Plugin Chain", func() {
 
 	// Test that an invalid API key is rejected by the simulator when --validate-keys is enabled.
 	// Only runs when E2E_SIMULATOR_VALIDATE_KEYS=true (simulator must be started with --validate-keys).
-	ginkgo.When("simulator has key validation enabled", func() {
+	ginkgo.When("simulator has key validation enabled", ginkgo.Label("tier2"), func() {
 		ginkgo.BeforeEach(func() {
 			if os.Getenv("E2E_SIMULATOR_VALIDATE_KEYS") != "true" {
 				ginkgo.Skip("E2E_SIMULATOR_VALIDATE_KEYS not set, skipping key validation test")
