@@ -34,8 +34,9 @@ var providers = []Provider{
 	{Name: "e2e-anthropic", Provider: "anthropic", SimulatorKey: simulatorKeys["anthropic"]},
 	{Name: "e2e-azure", Provider: "azure-openai", SimulatorKey: simulatorKeys["azure-openai"]},
 	{Name: "e2e-vertex", Provider: "vertex", SimulatorKey: simulatorKeys["vertex"]},
-	// bedrock-openai: uncomment once the translator is in the odh-stable image
-	// {Name: "e2e-bedrock", Provider: "bedrock-openai", SimulatorKey: simulatorKeys["bedrock-openai"]},
+	// bedrock-openai uses /v1/chat/completions (same as OpenAI), so the simulator
+	// validates against the OpenAI key until key-based provider dispatch is implemented.
+	{Name: "e2e-bedrock", Provider: "bedrock-openai", SimulatorKey: simulatorKeys["openai"]},
 }
 
 func createProviderResources(p Provider) {
@@ -62,10 +63,11 @@ metadata:
   namespace: %s
 spec:
   provider: %s
+  targetModel: %s
   endpoint: %s
   credentialRef:
     name: %s-api-key
-`, p.Name, nsName, p.Provider, simulatorEP, p.Name))
+`, p.Name, nsName, p.Provider, p.Name, simulatorEP, p.Name))
 
 	// ExternalName Service pointing to simulator
 	kubectlApplyLiteral(fmt.Sprintf(`
@@ -99,7 +101,7 @@ spec:
   - matches:
     - path:
         type: PathPrefix
-        value: /%s/
+        value: /%s/%s/
     backendRefs:
     - name: %s-backend
       port: 443
@@ -120,7 +122,7 @@ spec:
     backendRefs:
     - name: %s-backend
       port: 443
-`, p.Name, nsName, gatewayName, gatewayNs, p.Name, p.Name, p.Name, p.Name))
+`, p.Name, nsName, gatewayName, gatewayNs, nsName, p.Name, p.Name, p.Name, p.Name))
 }
 
 func deleteProviderResources(p Provider) {
@@ -142,8 +144,8 @@ func getCurlCommand(modelName string) []string {
 	// Access gateway service from inside the cluster via DNS.
 	// Istio creates a service named <gateway-name>-istio for each Gateway.
 	svcName := gatewayName + "-istio"
-	gatewayURL := fmt.Sprintf("http://%s.%s.svc:80/%s/v1/chat/completions",
-		svcName, gatewayNs, modelName)
+	gatewayURL := fmt.Sprintf("http://%s.%s.svc:80/%s/%s/v1/chat/completions",
+		svcName, gatewayNs, nsName, modelName)
 
 	return []string{
 		"curl", "-si", "--max-time", strconv.Itoa(int(curlTimeout.Seconds())),
