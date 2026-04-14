@@ -101,16 +101,10 @@ spec:
   - matches:
     - path:
         type: PathPrefix
-        value: /%s/
+        value: /%s/%s/
     backendRefs:
     - name: %s-backend
       port: 443
-    filters:
-    - type: URLRewrite
-      urlRewrite:
-        path:
-          type: ReplacePrefixMatch
-          replacePrefixMatch: /
   - matches:
     - headers:
       - name: X-Gateway-Model-Name
@@ -122,7 +116,7 @@ spec:
     backendRefs:
     - name: %s-backend
       port: 443
-`, p.Name, nsName, gatewayName, gatewayNs, p.Name, p.Name, p.Name, p.Name))
+`, p.Name, nsName, gatewayName, gatewayNs, nsName, p.Name, p.Name, p.Name, p.Name))
 }
 
 func deleteProviderResources(p Provider) {
@@ -144,8 +138,8 @@ func getCurlCommand(modelName string) []string {
 	// Access gateway service from inside the cluster via DNS.
 	// Istio creates a service named <gateway-name>-istio for each Gateway.
 	svcName := gatewayName + "-istio"
-	gatewayURL := fmt.Sprintf("http://%s.%s.svc:80/%s/v1/chat/completions",
-		svcName, gatewayNs, modelName)
+	gatewayURL := fmt.Sprintf("http://%s.%s.svc:80/%s/%s/v1/chat/completions",
+		svcName, gatewayNs, nsName, modelName)
 
 	return []string{
 		"curl", "-si", "--max-time", strconv.Itoa(int(curlTimeout.Seconds())),
