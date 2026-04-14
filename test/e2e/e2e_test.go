@@ -62,10 +62,11 @@ metadata:
   namespace: %s
 spec:
   provider: %s
+  targetModel: %s
   endpoint: %s
   credentialRef:
     name: %s-api-key
-`, p.Name, nsName, p.Provider, simulatorEP, p.Name))
+`, p.Name, nsName, p.Provider, p.Name, simulatorEP, p.Name))
 
 	// ExternalName Service pointing to simulator
 	kubectlApplyLiteral(fmt.Sprintf(`
