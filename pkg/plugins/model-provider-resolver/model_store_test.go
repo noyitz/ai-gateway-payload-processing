@@ -25,30 +25,38 @@ import (
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/provider"
 )
 
-func TestModelStore_SetAndGet(t *testing.T) {
+func TestModelStore_AddAndGetExternalModel(t *testing.T) {
 	store := newModelInfoStore()
-	key := types.NamespacedName{Name: "test", Namespace: "ns"}
+	key := types.NamespacedName{Namespace: "ns", Name: "external-model"}
 
-	store.setModelInfo("model-a", ModelInfo{provider: provider.Anthropic}, key)
+	store.addOrUpdateExternalModel(key, &externalModelInfo{provider: provider.Anthropic})
 
-	info, found := store.getModelInfo("model-a")
+	info, found := store.getModelInfo(key)
 	assert.True(t, found)
+	assert.NotNil(t, info)
 	assert.Equal(t, provider.Anthropic, info.provider)
 }
 
-func TestModelStore_DeleteByResource(t *testing.T) {
+func TestModelStore_GetModelInfo_NotFound(t *testing.T) {
 	store := newModelInfoStore()
-	key := types.NamespacedName{Name: "test", Namespace: "ns"}
+	store.addOrUpdateExternalModel(
+		types.NamespacedName{Namespace: "ns", Name: "ext"},
+		&externalModelInfo{provider: provider.OpenAI},
+	)
 
-	store.setModelInfo("model-a", ModelInfo{provider: provider.Anthropic}, key)
-	store.deleteByResource(key)
-
-	_, found := store.getModelInfo("model-a")
+	_, found := store.getModelInfo(types.NamespacedName{Namespace: "ns", Name: "other"})
 	assert.False(t, found)
 }
 
-func TestModelStore_DeleteNonExistent(t *testing.T) {
+func TestModelStore_DeleteExternalModel(t *testing.T) {
 	store := newModelInfoStore()
-	// should not panic
-	store.deleteByResource(types.NamespacedName{Name: "nonexistent", Namespace: "ns"})
+	key := types.NamespacedName{Namespace: "ns", Name: "ext"}
+	store.addOrUpdateExternalModel(key, &externalModelInfo{provider: provider.OpenAI})
+
+	_, foundBefore := store.getModelInfo(key)
+	assert.True(t, foundBefore)
+
+	store.deleteExternalModel(key)
+	_, foundAfter := store.getModelInfo(key)
+	assert.False(t, foundAfter)
 }

@@ -20,12 +20,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
+	errcommon "sigs.k8s.io/gateway-api-inference-extension/pkg/common/error"
+	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/common/observability/logging"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/framework/interface/plugin"
 
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/state"
@@ -34,13 +38,6 @@ import (
 const (
 	ModelProviderResolverPluginType = "model-provider-resolver"
 )
-
-// externalModelGVK is the GroupVersionKind for ExternalModel CRD.
-var externalModelGVK = schema.GroupVersionKind{
-	Group:   "maas.opendatahub.io",
-	Version: "v1alpha1",
-	Kind:    "ExternalModel",
-}
 
 // compile-time type validation
 var _ framework.RequestProcessor = &ModelProviderResolverPlugin{}
@@ -62,7 +59,7 @@ func NewModelProviderResolver(reconcilerBuilder func() *builder.Builder, clientR
 		store:  modelInfoStore,
 	}
 
-	// Watch ExternalModel CRDs directly (no MaaSModelRef dependency)
+	// Watch ExternalModel CRDs directly (no MaaS dependency)
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(externalModelGVK)
 
@@ -104,20 +101,48 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 		return nil // not an inference request (e.g. API key management, model listing)
 	}
 
-	info, found := p.modelInfoStore.getModelInfo(model)
+	log.FromContext(ctx).V(logutil.VERBOSE).Info("received incoming request", "path", request.Headers[":path"])
+	relativePath := sanitizePath(request.Headers[":path"])
+
+	segments := strings.Split(relativePath, "/")
+	if len(segments) < 2 || segments[0] == "" || segments[1] == "" {
+		log.FromContext(ctx).V(logutil.VERBOSE).Info("wasn't able to parse namespaced name from path", "path", relativePath)
+		return nil
+	}
+
+	modelKey := types.NamespacedName{Namespace: segments[0], Name: segments[1]}
+	log.FromContext(ctx).V(logutil.VERBOSE).Info("exported namespaced name from path", "key", modelKey)
+
+	externalModelInfo, found := p.modelInfoStore.getModelInfo(modelKey)
 	if !found { // info is stored only for external models
 		return nil // this is not considered an error, we just need to skip if it's internal model
 	}
 
-	// info of external model written to cycle state for next plugins
-	cycleState.Write(state.ModelKey, model)
-	cycleState.Write(state.ProviderKey, info.provider)
-	if info.credentialRefName != "" {
-		cycleState.Write(state.CredsRefName, info.credentialRefName)
-	}
-	if info.credentialRefNamespace != "" {
-		cycleState.Write(state.CredsRefNamespace, info.credentialRefNamespace)
+	if !strings.HasSuffix(relativePath, "chat/completions") { // no support for other input types
+		return errcommon.Error{Code: errcommon.BadRequest, Msg: "only /chat/completions input type is supported"}
+
 	}
 
+	// if there's a mismatch it's an error, we don't want to proceed
+	if externalModelInfo.targetModel != model {
+		return errcommon.Error{Code: errcommon.NotFound, Msg: fmt.Sprintf("model in request body '%s' doesn't match ExternalModel", model)}
+	}
+
+	// info of external model written to cycle state for next plugins
+	cycleState.Write(state.ProviderKey, externalModelInfo.provider)
+	cycleState.Write(state.ModelKey, externalModelInfo.targetModel)
+	cycleState.Write(state.CredsRefName, externalModelInfo.secretName)
+	cycleState.Write(state.CredsRefNamespace, externalModelInfo.secretNamespace)
+
 	return nil
+}
+
+func sanitizePath(relativeUrlPath string) string {
+	relativeUrlPath = strings.TrimSpace(relativeUrlPath)
+
+	if index := strings.IndexByte(relativeUrlPath, '?'); index >= 0 {
+		relativeUrlPath = relativeUrlPath[:index] // remove query params
+	}
+
+	return strings.Trim(relativeUrlPath, "/")
 }

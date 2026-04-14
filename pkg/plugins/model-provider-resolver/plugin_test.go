@@ -20,7 +20,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
@@ -31,38 +30,47 @@ import (
 
 func TestProcessRequest_ModelResolved(t *testing.T) {
 	store := newModelInfoStore()
-	model := "claude-sonnet"
-	credentialRefName := "anthropic-key"
-	credentialRefNamespace := "llm"
-	store.setModelInfo(model, ModelInfo{
-		provider:               provider.Anthropic,
-		credentialRefName:      credentialRefName,
-		credentialRefNamespace: credentialRefNamespace,
-	}, types.NamespacedName{Name: "claude-sonnet", Namespace: "llm"})
+	const (
+		extNS       = "llm"
+		extName     = "claude-sonnet"
+		targetModel = "claude-sonnet-1234"
+		credName    = "anthropic-key"
+	)
+	store.addOrUpdateExternalModel(
+		types.NamespacedName{Namespace: extNS, Name: extName},
+		&externalModelInfo{
+			provider:        provider.Anthropic,
+			targetModel:     targetModel,
+			secretName:      credName,
+			secretNamespace: extNS,
+		},
+	)
 
 	plugin := &ModelProviderResolverPlugin{modelInfoStore: store}
 	cs := framework.NewCycleState()
 	req := framework.NewInferenceRequest()
-	req.Body["model"] = model
+	req.Headers[":path"] = "/" + extNS + "/" + extName + "/v1/chat/completions"
+	// Body "model" must match targetModel on the ExternalModel (ProcessRequest validates this).
+	req.Body["model"] = targetModel
 
 	err := plugin.ProcessRequest(context.Background(), cs, req)
 	require.NoError(t, err)
 
 	actualModel, err := framework.ReadCycleStateKey[string](cs, state.ModelKey)
-	assert.NoError(t, err)
-	assert.Equal(t, model, actualModel)
+	require.NoError(t, err)
+	require.Equal(t, targetModel, actualModel)
 
 	actualProvider, err := framework.ReadCycleStateKey[string](cs, state.ProviderKey)
-	assert.NoError(t, err)
-	assert.Equal(t, provider.Anthropic, actualProvider)
+	require.NoError(t, err)
+	require.Equal(t, provider.Anthropic, actualProvider)
 
 	actualCredsName, err := framework.ReadCycleStateKey[string](cs, state.CredsRefName)
-	assert.NoError(t, err)
-	assert.Equal(t, credentialRefName, actualCredsName)
+	require.NoError(t, err)
+	require.Equal(t, credName, actualCredsName)
 
 	actualCredsNamespace, err := framework.ReadCycleStateKey[string](cs, state.CredsRefNamespace)
-	assert.NoError(t, err)
-	assert.Equal(t, credentialRefNamespace, actualCredsNamespace)
+	require.NoError(t, err)
+	require.Equal(t, extNS, actualCredsNamespace)
 }
 
 func TestProcessRequest_ModelNotFound(t *testing.T) {
@@ -70,13 +78,14 @@ func TestProcessRequest_ModelNotFound(t *testing.T) {
 	p := &ModelProviderResolverPlugin{modelInfoStore: store}
 	cs := framework.NewCycleState()
 	req := framework.NewInferenceRequest()
+	req.Headers[":path"] = "/model-ns/model-name/v1/chat/completions"
 	req.Body["model"] = "unknown-model"
 
 	err := p.ProcessRequest(context.Background(), cs, req)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	_, provErr := framework.ReadCycleStateKey[string](cs, state.ProviderKey)
-	assert.Error(t, provErr) // not found in CycleState
+	_, err = framework.ReadCycleStateKey[string](cs, state.ProviderKey)
+	require.Error(t, err) // not found in CycleState
 }
 
 func TestProcessRequest_NoModel(t *testing.T) {
@@ -85,33 +94,30 @@ func TestProcessRequest_NoModel(t *testing.T) {
 	cs := framework.NewCycleState()
 
 	err := p.ProcessRequest(context.Background(), cs, framework.NewInferenceRequest())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// CycleState should remain empty — request passes through unmodified
-	_, provErr := framework.ReadCycleStateKey[string](cs, state.ProviderKey)
-	assert.Error(t, provErr)
-	_, modelErr := framework.ReadCycleStateKey[string](cs, state.ModelKey)
-	assert.Error(t, modelErr)
+	_, err = framework.ReadCycleStateKey[string](cs, state.ProviderKey)
+	require.Error(t, err)
+	_, err = framework.ReadCycleStateKey[string](cs, state.ModelKey)
+	require.Error(t, err)
 }
 
-func TestProcessRequest_NoCredentialRef(t *testing.T) {
+func TestProcessRequest_BadPath(t *testing.T) {
 	store := newModelInfoStore()
-	store.setModelInfo("gpt-4o", ModelInfo{
-		provider: provider.OpenAI,
-		// no credential ref
-	}, types.NamespacedName{Name: "gpt-4o", Namespace: "llm"})
-
+	store.addOrUpdateExternalModel(
+		types.NamespacedName{Namespace: "llm", Name: "ext"},
+		&externalModelInfo{provider: provider.OpenAI, targetModel: "gpt-4o", secretName: "k", secretNamespace: "llm"},
+	)
 	p := &ModelProviderResolverPlugin{modelInfoStore: store}
 	cs := framework.NewCycleState()
 	req := framework.NewInferenceRequest()
+	req.Headers[":path"] = "/incomplete"
 	req.Body["model"] = "gpt-4o"
 
 	err := p.ProcessRequest(context.Background(), cs, req)
 	require.NoError(t, err)
 
-	actualProvider, _ := framework.ReadCycleStateKey[string](cs, state.ProviderKey)
-	assert.Equal(t, provider.OpenAI, actualProvider)
-
-	_, credErr := framework.ReadCycleStateKey[string](cs, state.CredsRefName)
-	assert.Error(t, credErr)
+	_, err = framework.ReadCycleStateKey[string](cs, state.ProviderKey)
+	require.Error(t, err)
 }

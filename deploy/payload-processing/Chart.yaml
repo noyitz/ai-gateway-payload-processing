@@ -10,7 +10,7 @@ appVersion: "0.2.0"
 
 dependencies:
   - name: body-based-routing
-    repository: "oci://us-central1-docker.pkg.dev/k8s-staging-images/gateway-api-inference-extension/charts"
-    version: v0
+    repository: oci://registry.k8s.io/gateway-api-inference-extension/charts
+    version: v1.5.0-rc.1
     # Upstream chart; overrides go under upstreamBbr in this chart’s values.yaml.
     alias: upstreamBbr
