@@ -134,6 +134,10 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 	cycleState.Write(state.CredsRefName, externalModelInfo.secretName)
 	cycleState.Write(state.CredsRefNamespace, externalModelInfo.secretNamespace)
 
+	// Overwrite X-Gateway-Model-Name with namespace/name so the header-based
+	// HTTPRoute rule matches the correct namespace after ClearRouteCache.
+	request.SetHeader("X-Gateway-Model-Name", modelKey.Namespace+"/"+modelKey.Name)
+
 	return nil
 }
 
