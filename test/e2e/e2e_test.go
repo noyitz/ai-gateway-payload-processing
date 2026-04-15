@@ -45,7 +45,7 @@ func createProviderResources(p Provider) {
 apiVersion: v1
 kind: Secret
 metadata:
-  name: %s-api-key
+  name: %s
   namespace: %s
   labels:
     inference.networking.k8s.io/bbr-managed: "true"
@@ -66,7 +66,7 @@ spec:
   targetModel: %s
   endpoint: %s
   credentialRef:
-    name: %s-api-key
+    name: %s
 `, p.Name, nsName, p.Provider, p.Name, simulatorEP, p.Name))
 
 	// ExternalName Service pointing to simulator
@@ -74,7 +74,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: %s-backend
+  name: %s
   namespace: %s
 spec:
   type: ExternalName
@@ -89,7 +89,7 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: e2e-%s
+  name: %s
   namespace: %s
 spec:
   parentRefs:
@@ -103,7 +103,7 @@ spec:
         type: PathPrefix
         value: /%s/%s/
     backendRefs:
-    - name: %s-backend
+    - name: %s
       port: 443
   - matches:
     - headers:
@@ -114,16 +114,16 @@ spec:
         type: PathPrefix
         value: /
     backendRefs:
-    - name: %s-backend
+    - name: %s
       port: 443
 `, p.Name, nsName, gatewayName, gatewayNs, nsName, p.Name, p.Name, p.Name, p.Name))
 }
 
 func deleteProviderResources(p Provider) {
-	kubectlDeleteResource("httproute", "e2e-"+p.Name, nsName)
-	kubectlDeleteResource("service", p.Name+"-backend", nsName)
+	kubectlDeleteResource("httproute", p.Name, nsName)
+	kubectlDeleteResource("service", p.Name, nsName)
 	kubectlDeleteResource("externalmodel", p.Name, nsName)
-	kubectlDeleteResource("secret", p.Name+"-api-key", nsName)
+	kubectlDeleteResource("secret", p.Name, nsName)
 }
 
 // getCurlCommand builds a curl command to send a chat completion request

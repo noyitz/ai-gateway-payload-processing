@@ -66,10 +66,50 @@ func setupInfra() {
 	createNamespace(nsName)
 
 	ginkgo.By("Creating simulator ServiceEntry and DestinationRule")
-	kubectlApply(renderTemplate("testdata/resources.yaml"))
+	kubectlApplyLiteral(fmt.Sprintf(`
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: e2e-simulator
+  namespace: %s
+spec:
+  hosts:
+  - e2e-simulator.external
+  location: MESH_EXTERNAL
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  resolution: STATIC
+  endpoints:
+  - address: %s
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: e2e-simulator
+  namespace: %s
+spec:
+  host: e2e-simulator.external
+  trafficPolicy:
+    tls:
+      mode: SIMPLE
+      insecureSkipVerify: true
+`, nsName, simulatorEP, nsName))
 
 	ginkgo.By("Creating curl client pod")
-	kubectlApply(renderTemplate("testdata/client.yaml"))
+	kubectlApplyLiteral(fmt.Sprintf(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: curl
+  namespace: %s
+spec:
+  containers:
+  - name: curl
+    image: curlimages/curl:7.83.1
+    command: ["tail", "-f", "/dev/null"]
+`, nsName))
 	waitForPodReady("curl", nsName)
 
 	ginkgo.By("Creating provider resources")
@@ -85,8 +125,9 @@ func cleanupInfra() {
 	for _, p := range providers {
 		deleteProviderResources(p)
 	}
-	kubectlDelete(renderTemplate("testdata/resources.yaml"))
-	kubectlDelete(renderTemplate("testdata/client.yaml"))
+	kubectlDeleteResource("destinationrule", "e2e-simulator", nsName)
+	kubectlDeleteResource("serviceentry", "e2e-simulator", nsName)
+	kubectlDeleteResource("pod", "curl", nsName)
 	_ = kubeClient.CoreV1().Namespaces().Delete(context.TODO(), nsName, metav1.DeleteOptions{})
 }
 
@@ -105,33 +146,6 @@ func createNamespace(name string) {
 	if err != nil && !strings.Contains(err.Error(), "already exists") {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
-}
-
-func renderTemplate(path string) string {
-	data, err := os.ReadFile(path)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	content := string(data)
-	content = strings.ReplaceAll(content, "$E2E_NS", nsName)
-	content = strings.ReplaceAll(content, "$E2E_SIMULATOR_ENDPOINT", simulatorEP)
-	content = strings.ReplaceAll(content, "$E2E_GATEWAY_NAME", gatewayName)
-	content = strings.ReplaceAll(content, "$E2E_GATEWAY_NAMESPACE", gatewayNs)
-	return content
-}
-
-func kubectlApply(yamlContent string) {
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
-	cmd.Stdin = strings.NewReader(yamlContent)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "kubectl apply failed: %s\n%s\n", err, string(out))
-	}
-	gomega.Expect(err).NotTo(gomega.HaveOccurred(), string(out))
-}
-
-func kubectlDelete(yamlContent string) {
-	cmd := exec.Command("kubectl", "delete", "--ignore-not-found", "-f", "-")
-	cmd.Stdin = strings.NewReader(yamlContent)
-	_, _ = cmd.CombinedOutput()
 }
 
 func kubectlApplyLiteral(yamlContent string) {
