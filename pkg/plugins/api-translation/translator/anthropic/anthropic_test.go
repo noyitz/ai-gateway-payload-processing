@@ -716,6 +716,53 @@ func TestTranslateRequest_UnknownRoleRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown role")
 }
 
+func TestTranslateRequest_StreamForwarded(t *testing.T) {
+	body := map[string]any{
+		"model":    "claude-sonnet-4-20250514",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+		"stream":   true,
+	}
+
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+	assert.Equal(t, true, translated["stream"])
+}
+
+func TestTranslateRequest_StreamFalseForwarded(t *testing.T) {
+	body := map[string]any{
+		"model":    "claude-sonnet-4-20250514",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+		"stream":   false,
+	}
+
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+	assert.Equal(t, false, translated["stream"])
+}
+
+func TestTranslateRequest_StreamOmittedWhenNotSet(t *testing.T) {
+	body := map[string]any{
+		"model":    "claude-sonnet-4-20250514",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+	}
+
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
+	require.NoError(t, err)
+	_, exists := translated["stream"]
+	assert.False(t, exists)
+}
+
+func TestTranslateRequest_EmptyMessages(t *testing.T) {
+	body := map[string]any{
+		"model":    "claude-sonnet-4-20250514",
+		"messages": []any{},
+	}
+
+	_, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "non-system message")
+}
+
 func TestTranslateRequest_NonTextContentSkipped(t *testing.T) {
 	// Non-text content (images) is currently extracted as text-only.
 	// Full multimodal support is tracked in a separate issue.

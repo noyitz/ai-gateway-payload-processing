@@ -93,6 +93,10 @@ func (t *AnthropicTranslator) TranslateRequest(body map[string]any) (map[string]
 		}
 	}
 
+	if stream, ok := body["stream"].(bool); ok {
+		translated["stream"] = stream
+	}
+
 	headers := map[string]string{
 		"anthropic-version": anthropicAPIVersion,
 		"content-type":      "application/json",
