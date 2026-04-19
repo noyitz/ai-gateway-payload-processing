@@ -92,7 +92,9 @@ spec:
   trafficPolicy:
     tls:
       mode: SIMPLE
-`, nsName, simulatorEP, nsName, simulatorEP))
+      sni: %s
+      caCertificates: /etc/ssl/certs/ca-certificates.crt
+`, nsName, simulatorEP, nsName, simulatorEP, simulatorEP))
 
 	ginkgo.By("Creating curl client pod")
 	kubectlApplyLiteral(fmt.Sprintf(`
