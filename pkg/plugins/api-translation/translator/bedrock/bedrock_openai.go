@@ -17,9 +17,8 @@ limitations under the License.
 package bedrock
 
 import (
-	"fmt"
-
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
+	errcommon "sigs.k8s.io/gateway-api-inference-extension/pkg/common/error"
 )
 
 const (
@@ -44,10 +43,14 @@ type BedrockOpenAITranslator struct{}
 // The request body is not mutated since Bedrock's OpenAI-compatible API accepts the same schema as OpenAI.
 func (t *BedrockOpenAITranslator) TranslateRequest(body map[string]any) (translatedBody map[string]any,
 	headersToMutate map[string]string, headersToRemove []string, err error) {
-	// Validate required fields
 	model, ok := body["model"].(string)
 	if !ok || model == "" {
-		return nil, nil, nil, fmt.Errorf("model field is required")
+		return nil, nil, nil, errcommon.Error{Code: errcommon.BadRequest, Msg: "model field is required"}
+	}
+
+	messages, _ := body["messages"].([]any)
+	if len(messages) == 0 {
+		return nil, nil, nil, errcommon.Error{Code: errcommon.BadRequest, Msg: "messages field is required and must not be empty"}
 	}
 
 	// Build headers for Bedrock OpenAI-compatible endpoint

@@ -19,9 +19,11 @@ package api_translation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
+	errcommon "sigs.k8s.io/gateway-api-inference-extension/pkg/common/error"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/framework/interface/plugin"
 
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
@@ -97,6 +99,10 @@ func (p *APITranslationPlugin) ProcessRequest(ctx context.Context, cycleState *f
 
 	translatedBody, headersToMutate, headersToRemove, err := translator.TranslateRequest(request.Body)
 	if err != nil {
+		var commErr errcommon.Error
+		if errors.As(err, &commErr) {
+			return commErr
+		}
 		return fmt.Errorf("request translation failed for provider '%s' - %w", providerName, err)
 	}
 
@@ -137,6 +143,10 @@ func (p *APITranslationPlugin) ProcessResponse(ctx context.Context, cycleState *
 
 	translatedBody, err := translator.TranslateResponse(response.Body, model)
 	if err != nil {
+		var commErr errcommon.Error
+		if errors.As(err, &commErr) {
+			return commErr
+		}
 		return fmt.Errorf("response translation failed for provider '%s' - %w", providerName, err)
 	}
 

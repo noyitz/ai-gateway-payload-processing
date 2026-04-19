@@ -17,9 +17,8 @@ limitations under the License.
 package openai
 
 import (
-	"fmt"
-
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
+	errcommon "sigs.k8s.io/gateway-api-inference-extension/pkg/common/error"
 )
 
 const (
@@ -43,7 +42,12 @@ type OpenAITranslator struct{}
 func (t *OpenAITranslator) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
 	model, _ := body["model"].(string)
 	if model == "" {
-		return nil, nil, nil, fmt.Errorf("model field is required")
+		return nil, nil, nil, errcommon.Error{Code: errcommon.BadRequest, Msg: "model field is required"}
+	}
+
+	messages, _ := body["messages"].([]any)
+	if len(messages) == 0 {
+		return nil, nil, nil, errcommon.Error{Code: errcommon.BadRequest, Msg: "messages field is required and must not be empty"}
 	}
 
 	headers := map[string]string{

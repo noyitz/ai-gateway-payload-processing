@@ -70,6 +70,28 @@ func TestTranslateRequest_EmptyModel(t *testing.T) {
 	assert.Contains(t, err.Error(), "model field is required")
 }
 
+func TestTranslateRequest_EmptyMessages(t *testing.T) {
+	body := map[string]any{
+		"model":    "nvidia.nemotron-nano-12b-v2",
+		"messages": []any{},
+	}
+
+	_, _, _, err := NewBedrockOpenAITranslator().TranslateRequest(body)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "messages")
+	assert.Contains(t, err.Error(), "BadRequest")
+}
+
+func TestTranslateRequest_MissingMessages(t *testing.T) {
+	body := map[string]any{
+		"model": "nvidia.nemotron-nano-12b-v2",
+	}
+
+	_, _, _, err := NewBedrockOpenAITranslator().TranslateRequest(body)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "messages")
+}
+
 func TestTranslateResponse_Passthrough(t *testing.T) {
 	body := map[string]any{
 		"id":      "chatcmpl-abc123",
