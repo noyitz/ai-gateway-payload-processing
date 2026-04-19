@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
+	errcommon "sigs.k8s.io/gateway-api-inference-extension/pkg/common/error"
 )
 
 const (
@@ -47,21 +48,21 @@ type AnthropicTranslator struct{}
 func (t *AnthropicTranslator) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
 	model, _ := body["model"].(string)
 	if model == "" {
-		return nil, nil, nil, fmt.Errorf("model field is required")
+		return nil, nil, nil, errcommon.Error{Code: errcommon.BadRequest, Msg: "model field is required"}
 	}
 
 	messages, err := extractMessages(body)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to extract messages: %w", err)
+		return nil, nil, nil, errcommon.Error{Code: errcommon.BadRequest, Msg: fmt.Sprintf("failed to extract messages: %v", err)}
 	}
 
 	systemPrompt, anthropicMessages, err := separateSystemMessages(messages)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, errcommon.Error{Code: errcommon.BadRequest, Msg: err.Error()}
 	}
 
 	if len(anthropicMessages) == 0 {
-		return nil, nil, nil, fmt.Errorf("at least one non-system message is required")
+		return nil, nil, nil, errcommon.Error{Code: errcommon.BadRequest, Msg: "at least one non-system message is required"}
 	}
 
 	maxTokens := resolveMaxTokens(body)
