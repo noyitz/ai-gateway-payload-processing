@@ -130,6 +130,7 @@ deploy_bbr() {
     helm install payload-processing "$PROJECT_ROOT/deploy/payload-processing" \
         --namespace "$GATEWAY_NAMESPACE" \
         --dependency-update \
+        -f "$SCRIPT_DIR/e2e-values.yaml" \
         --set upstreamBbr.inferenceGateway.name="$GATEWAY_NAME" \
         --set upstreamBbr.provider.name=istio \
         --set upstreamBbr.provider.istio.envoyFilter.operation=INSERT_FIRST

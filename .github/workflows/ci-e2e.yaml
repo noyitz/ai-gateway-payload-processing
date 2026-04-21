@@ -86,8 +86,45 @@ jobs:
       - name: Set up Kind cluster with Istio and BBR
         run: make test-e2e-setup
 
+      - name: Debug - BBR pod args and status
+        if: always()
+        run: |
+          echo "=== BBR pod args ==="
+          kubectl get pod -n default -l app=payload-processing -o jsonpath='{.items[0].spec.containers[0].args}' 2>/dev/null | python3 -c "import json,sys; [print(a) for a in json.load(sys.stdin)]" || echo "Failed to get pod args"
+          echo ""
+          echo "=== BBR pod status ==="
+          kubectl get pods -n default -l app=payload-processing -o wide 2>/dev/null || true
+          echo ""
+          echo "=== ExternalModel CRD provider field ==="
+          kubectl get crd externalmodels.maas.opendatahub.io -o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.provider}' 2>/dev/null | python3 -m json.tool || true
+
       - name: Run E2E tests with JUnit report
         run: make test-e2e-junit
+
+      - name: Debug - BBR logs on failure
+        if: failure()
+        run: |
+          echo "=== BBR pod logs (last 50 lines) ==="
+          kubectl logs -n default -l app=payload-processing --tail=50 2>/dev/null || true
+          echo ""
+          echo "=== Gateway pod logs (last 20 lines) ==="
+          kubectl logs -n default -l gateway.networking.k8s.io/gateway-name=e2e-gateway --tail=20 2>/dev/null || true
+          echo ""
+          echo "=== ExternalModels in test namespace ==="
+          kubectl get externalmodels -n bbr-e2e -o wide 2>/dev/null || true
+          echo ""
+          echo "=== Services in test namespace ==="
+          kubectl get svc -n bbr-e2e -o wide 2>/dev/null || true
+          echo ""
+          echo "=== HTTPRoutes in test namespace ==="
+          kubectl get httproute -n bbr-e2e -o wide 2>/dev/null || true
+          echo ""
+          echo "=== Manual curl test for vertex-openai ==="
+          kubectl exec -n bbr-e2e curl -- curl -si --max-time 10 \
+            "http://e2e-gateway-istio.default.svc:80/bbr-e2e/e2e-vertex-openai/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -H "Connection: close" \
+            -d '{"model":"e2e-vertex-openai","messages":[{"role":"user","content":"debug"}]}' 2>/dev/null || true
 
       - name: Upload JUnit report
         if: always()

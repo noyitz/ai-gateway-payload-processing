@@ -33,10 +33,12 @@ var providers = []Provider{
 	{Name: "e2e-openai", Provider: "openai", SimulatorKey: simulatorKeys["openai"]},
 	{Name: "e2e-anthropic", Provider: "anthropic", SimulatorKey: simulatorKeys["anthropic"]},
 	{Name: "e2e-azure", Provider: "azure-openai", SimulatorKey: simulatorKeys["azure-openai"]},
-	{Name: "e2e-vertex", Provider: "vertex", SimulatorKey: simulatorKeys["vertex"]},
+	// vertex (native GenerateContent) commented out — not used in 3.4 ExternalModel flow.
+	// {Name: "e2e-vertex", Provider: "vertex", SimulatorKey: simulatorKeys["vertex"]},
 	// bedrock-openai uses /v1/chat/completions (same as OpenAI), so the simulator
 	// validates against the OpenAI key until key-based provider dispatch is implemented.
 	{Name: "e2e-bedrock", Provider: "bedrock-openai", SimulatorKey: simulatorKeys["openai"]},
+	{Name: "e2e-vertex-openai", Provider: "vertex-openai", SimulatorKey: simulatorKeys["vertex"]},
 }
 
 func createProviderResources(p Provider) {

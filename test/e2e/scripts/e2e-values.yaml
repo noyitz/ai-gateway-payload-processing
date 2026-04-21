@@ -1,0 +1,19 @@
+upstreamBbr:
+  bbr:
+    plugins:
+      - type: body-field-to-header
+        name: model-extractor
+        json:
+          fieldName: model
+          headerName: X-Gateway-Model-Name
+      - type: model-provider-resolver
+        name: model-provider-resolver
+      - type: api-translation
+        name: api-translation
+        json:
+          vertexOpenAI:
+            project: "test-project"
+            location: "us-central1"
+            endpoint: "openapi"
+      - type: apikey-injection
+        name: apikey-injection
