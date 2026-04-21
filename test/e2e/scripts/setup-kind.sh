@@ -117,15 +117,17 @@ EOF
 deploy_bbr() {
     echo "Deploying BBR via Helm chart..."
 
-    # Build and load image for arm64 if on Mac (quay.io image is x86 only)
+    local image_tag="quay.io/opendatahub/odh-ai-gateway-payload-processing:odh-stable"
+
+    # Always build from source to ensure E2E tests run against the current code.
+    # The quay.io image may not include changes from the PR being tested.
+    echo "  Building BBR image from source..."
+    local platform="linux/amd64"
     if [[ "$(uname -m)" == "arm64" ]]; then
-        echo "  Building arm64 image for Kind..."
-        (cd "$PROJECT_ROOT" && make image-local-load \
-            IMAGE_TAG=quay.io/opendatahub/odh-ai-gateway-payload-processing:odh-stable \
-            PLATFORMS=linux/arm64 2>/dev/null)
-        kind load docker-image quay.io/opendatahub/odh-ai-gateway-payload-processing:odh-stable \
-            --name "$KIND_CLUSTER_NAME"
+        platform="linux/arm64"
     fi
+    docker build -t "$image_tag" --platform "$platform" "$PROJECT_ROOT"
+    kind load docker-image "$image_tag" --name "$KIND_CLUSTER_NAME"
 
     helm install payload-processing "$PROJECT_ROOT/deploy/payload-processing" \
         --namespace "$GATEWAY_NAMESPACE" \
