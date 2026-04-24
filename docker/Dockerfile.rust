@@ -1,6 +1,6 @@
 # Multi-stage build for the full Rust ext_proc server (Config C).
 #
-# Build: docker build --platform linux/amd64 -f docker/Dockerfile.rust -t ipp-rust-server .
+# Build: docker build -f docker/Dockerfile.rust -t ipp-rust-server .
 # Run:   docker run -p 9004:9004 ipp-rust-server
 
 # --- Stage 1: Build ---
@@ -24,11 +24,17 @@ RUN cargo build --release -p ipp-server \
     && strip target/release/ipp-server
 
 # --- Stage 2: Runtime ---
-FROM gcr.io/distroless/cc-debian12:nonroot
+# Use debian:trixie-slim to match the glibc version from rust:latest build stage
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3t64 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/target/release/ipp-server /ipp-server
 
-USER nonroot:nonroot
+RUN useradd -r -u 1001 ipp
+USER 1001:1001
 
 EXPOSE 9004 9005
 
