@@ -69,6 +69,10 @@ impl InferenceMessage {
         self.body_mutated
     }
 
+    pub fn mark_body_mutated(&mut self) {
+        self.body_mutated = true;
+    }
+
     pub fn mutated_headers(&self) -> &HashMap<String, String> {
         &self.mutated_headers
     }

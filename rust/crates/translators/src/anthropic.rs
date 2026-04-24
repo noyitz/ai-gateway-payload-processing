@@ -78,18 +78,19 @@ impl Translator for AnthropicTranslator {
 
     fn translate_response(
         &self,
-        body: &Value,
+        body: &mut Value,
         model: &str,
-    ) -> Result<Option<Value>, PluginError> {
+    ) -> Result<bool, PluginError> {
         let body_type = body.get("type").and_then(Value::as_str).unwrap_or("");
 
         if body_type == "error" {
-            return Ok(Some(translate_error(body)));
+            *body = translate_error(&*body);
+            return Ok(true);
         }
 
-        let content = extract_text_content(body);
+        let content = extract_text_content(&*body);
         let finish_reason = map_stop_reason(body.get("stop_reason").and_then(Value::as_str));
-        let usage = map_usage(body);
+        let usage = map_usage(&*body);
 
         let id = body.get("id").and_then(Value::as_str).unwrap_or("");
         let model = if model.is_empty() {
@@ -104,7 +105,7 @@ impl Translator for AnthropicTranslator {
         });
 
         if finish_reason == "tool_calls" {
-            let tool_calls = extract_tool_calls(body);
+            let tool_calls = extract_tool_calls(&*body);
             if !tool_calls.is_empty() {
                 message["tool_calls"] = json!(tool_calls);
             }
@@ -115,7 +116,7 @@ impl Translator for AnthropicTranslator {
             .unwrap_or_default()
             .as_secs();
 
-        Ok(Some(json!({
+        *body = json!({
             "id": id,
             "object": "chat.completion",
             "created": now,
@@ -126,7 +127,8 @@ impl Translator for AnthropicTranslator {
                 "finish_reason": finish_reason,
             }],
             "usage": usage,
-        })))
+        });
+        Ok(true)
     }
 }
 
@@ -731,7 +733,7 @@ mod tests {
 
     #[test]
     fn basic_response_translation() {
-        let body = json!({
+        let mut body = json!({
             "id": "msg_123",
             "type": "message",
             "model": "claude-3-5-sonnet-20241022",
@@ -739,36 +741,36 @@ mod tests {
             "stop_reason": "end_turn",
             "usage": {"input_tokens": 10, "output_tokens": 5}
         });
-        let result = AnthropicTranslator
-            .translate_response(&body, "claude-3-5-sonnet-20241022")
-            .unwrap()
+        let mutated = AnthropicTranslator
+            .translate_response(&mut body, "claude-3-5-sonnet-20241022")
             .unwrap();
+        assert!(mutated);
 
-        assert_eq!(result["id"], "msg_123");
-        assert_eq!(result["object"], "chat.completion");
-        assert_eq!(result["model"], "claude-3-5-sonnet-20241022");
-        assert_eq!(result["choices"][0]["message"]["content"], "Hello!");
-        assert_eq!(result["choices"][0]["finish_reason"], "stop");
-        assert_eq!(result["usage"]["prompt_tokens"], 10);
-        assert_eq!(result["usage"]["completion_tokens"], 5);
-        assert_eq!(result["usage"]["total_tokens"], 15);
+        assert_eq!(body["id"], "msg_123");
+        assert_eq!(body["object"], "chat.completion");
+        assert_eq!(body["model"], "claude-3-5-sonnet-20241022");
+        assert_eq!(body["choices"][0]["message"]["content"], "Hello!");
+        assert_eq!(body["choices"][0]["finish_reason"], "stop");
+        assert_eq!(body["usage"]["prompt_tokens"], 10);
+        assert_eq!(body["usage"]["completion_tokens"], 5);
+        assert_eq!(body["usage"]["total_tokens"], 15);
     }
 
     #[test]
     fn response_max_tokens_stop_reason() {
-        let body = json!({
+        let mut body = json!({
             "id": "msg_1", "type": "message",
             "content": [{"type": "text", "text": "Partial"}],
             "stop_reason": "max_tokens",
             "usage": {"input_tokens": 5, "output_tokens": 100}
         });
-        let result = AnthropicTranslator.translate_response(&body, "claude").unwrap().unwrap();
-        assert_eq!(result["choices"][0]["finish_reason"], "length");
+        AnthropicTranslator.translate_response(&mut body, "claude").unwrap();
+        assert_eq!(body["choices"][0]["finish_reason"], "length");
     }
 
     #[test]
     fn response_tool_use() {
-        let body = json!({
+        let mut body = json!({
             "id": "msg_1", "type": "message",
             "content": [
                 {"type": "text", "text": "I'll check."},
@@ -777,34 +779,34 @@ mod tests {
             "stop_reason": "tool_use",
             "usage": {"input_tokens": 10, "output_tokens": 20}
         });
-        let result = AnthropicTranslator.translate_response(&body, "claude").unwrap().unwrap();
-        assert_eq!(result["choices"][0]["finish_reason"], "tool_calls");
-        let tc = result["choices"][0]["message"]["tool_calls"].as_array().unwrap();
+        AnthropicTranslator.translate_response(&mut body, "claude").unwrap();
+        assert_eq!(body["choices"][0]["finish_reason"], "tool_calls");
+        let tc = body["choices"][0]["message"]["tool_calls"].as_array().unwrap();
         assert_eq!(tc.len(), 1);
         assert_eq!(tc[0]["function"]["name"], "get_weather");
     }
 
     #[test]
     fn response_error_translation() {
-        let body = json!({
+        let mut body = json!({
             "type": "error",
             "error": {"type": "invalid_request_error", "message": "model not found"}
         });
-        let result = AnthropicTranslator.translate_response(&body, "claude").unwrap().unwrap();
-        assert_eq!(result["error"]["type"], "invalid_request_error");
-        assert_eq!(result["error"]["message"], "model not found");
+        AnthropicTranslator.translate_response(&mut body, "claude").unwrap();
+        assert_eq!(body["error"]["type"], "invalid_request_error");
+        assert_eq!(body["error"]["message"], "model not found");
     }
 
     #[test]
     fn response_model_from_body_when_empty() {
-        let body = json!({
+        let mut body = json!({
             "id": "msg_1", "type": "message", "model": "claude-3-haiku",
             "content": [{"type": "text", "text": "Hi"}],
             "stop_reason": "end_turn",
             "usage": {"input_tokens": 1, "output_tokens": 1}
         });
-        let result = AnthropicTranslator.translate_response(&body, "").unwrap().unwrap();
-        assert_eq!(result["model"], "claude-3-haiku");
+        AnthropicTranslator.translate_response(&mut body, "").unwrap();
+        assert_eq!(body["model"], "claude-3-haiku");
     }
 
     #[test]

@@ -50,15 +50,10 @@ impl Translator for VertexOpenAiTranslator {
 
     fn translate_response(
         &self,
-        body: &Value,
+        body: &mut Value,
         _model: &str,
-    ) -> Result<Option<Value>, PluginError> {
-        let mut body = body.clone();
-        if self.stripper.strip(&mut body) {
-            Ok(Some(body))
-        } else {
-            Ok(None)
-        }
+    ) -> Result<bool, PluginError> {
+        Ok(self.stripper.strip(body))
     }
 }
 
@@ -87,7 +82,7 @@ mod tests {
 
     #[test]
     fn response_strips_extra_properties() {
-        let body = json!({
+        let mut body = json!({
             "usage": {
                 "prompt_tokens": 5,
                 "completion_tokens": 10,
@@ -95,23 +90,23 @@ mod tests {
                 "extra_properties": {"cached_content_token_count": 0}
             }
         });
-        let result = test_translator()
-            .translate_response(&body, "gemini")
-            .unwrap()
+        let mutated = test_translator()
+            .translate_response(&mut body, "gemini")
             .unwrap();
-        assert!(result["usage"].get("extra_properties").is_none());
-        assert_eq!(result["usage"]["prompt_tokens"], 5);
+        assert!(mutated);
+        assert!(body["usage"].get("extra_properties").is_none());
+        assert_eq!(body["usage"]["prompt_tokens"], 5);
     }
 
     #[test]
     fn response_no_mutation_when_clean() {
-        let body = json!({
+        let mut body = json!({
             "usage": {"prompt_tokens": 5, "completion_tokens": 10}
         });
-        let result = test_translator()
-            .translate_response(&body, "gemini")
+        let mutated = test_translator()
+            .translate_response(&mut body, "gemini")
             .unwrap();
-        assert!(result.is_none());
+        assert!(!mutated);
     }
 
     #[test]

@@ -18,6 +18,14 @@ impl ResponseFieldStripper {
         }
     }
 
+    pub fn would_strip(&self, body: &Value) -> bool {
+        let obj = match body.as_object() {
+            Some(obj) => obj,
+            None => return false,
+        };
+        self.field_paths.iter().any(|fp| check_field_exists(obj, fp, 0))
+    }
+
     pub fn strip(&self, body: &mut Value) -> bool {
         let obj = match body.as_object_mut() {
             Some(obj) => obj,
@@ -54,6 +62,36 @@ fn parse_field_paths(raw: &[&str]) -> Vec<FieldPath> {
                 .collect()
         })
         .collect()
+}
+
+fn check_field_exists(
+    obj: &serde_json::Map<String, Value>,
+    path: &[FieldSegment],
+    idx: usize,
+) -> bool {
+    if idx >= path.len() {
+        return false;
+    }
+    let seg = &path[idx];
+    let is_last = idx == path.len() - 1;
+
+    if is_last {
+        return obj.contains_key(&seg.key);
+    }
+    if seg.is_array {
+        return match obj.get(&seg.key).and_then(Value::as_array) {
+            Some(arr) => arr.iter().any(|elem| {
+                elem.as_object()
+                    .map(|m| check_field_exists(m, path, idx + 1))
+                    .unwrap_or(false)
+            }),
+            None => false,
+        };
+    }
+    match obj.get(&seg.key).and_then(Value::as_object) {
+        Some(child) => check_field_exists(child, path, idx + 1),
+        None => false,
+    }
 }
 
 fn strip_field(

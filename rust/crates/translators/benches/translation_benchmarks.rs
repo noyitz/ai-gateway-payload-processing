@@ -47,24 +47,26 @@ fn bench_anthropic_request_complex(c: &mut Criterion) {
 
 fn bench_anthropic_response_text(c: &mut Criterion) {
     let translator = AnthropicTranslator;
-    let body = load_fixture("anthropic_response_text.json");
+    let body_orig = load_fixture("anthropic_response_text.json");
 
     c.bench_function("anthropic_response_text", |b| {
         b.iter(|| {
-            let result = translator.translate_response(black_box(&body), "claude-3-5-sonnet-20241022");
-            black_box(result).unwrap();
+            let mut body = body_orig.clone();
+            translator.translate_response(black_box(&mut body), "claude-3-5-sonnet-20241022").unwrap();
+            black_box(body);
         })
     });
 }
 
 fn bench_anthropic_response_tool_use(c: &mut Criterion) {
     let translator = AnthropicTranslator;
-    let body = load_fixture("anthropic_response_tool_use.json");
+    let body_orig = load_fixture("anthropic_response_tool_use.json");
 
     c.bench_function("anthropic_response_tool_use", |b| {
         b.iter(|| {
-            let result = translator.translate_response(black_box(&body), "claude-3-5-sonnet-20241022");
-            black_box(result).unwrap();
+            let mut body = body_orig.clone();
+            translator.translate_response(black_box(&mut body), "claude-3-5-sonnet-20241022").unwrap();
+            black_box(body);
         })
     });
 }
@@ -83,12 +85,13 @@ fn bench_openai_passthrough(c: &mut Criterion) {
 
 fn bench_azure_response_strip(c: &mut Criterion) {
     let translator = AzureOpenAiTranslator::new();
-    let body = load_fixture("azure_response_with_filters.json");
+    let body_orig = load_fixture("azure_response_with_filters.json");
 
     c.bench_function("azure_response_strip", |b| {
         b.iter(|| {
-            let result = translator.translate_response(black_box(&body), "gpt-4o");
-            black_box(result).unwrap();
+            let mut body = body_orig.clone();
+            translator.translate_response(black_box(&mut body), "gpt-4o").unwrap();
+            black_box(body);
         })
     });
 }

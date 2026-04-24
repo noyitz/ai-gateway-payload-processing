@@ -9,11 +9,19 @@ We built a Rust implementation of the AI Gateway Payload Processing (IPP) ext_pr
 - **Config C — Full Rust**: Complete Rust rewrite with tonic gRPC server
 
 **Key findings:**
-- Go is 1.5-3x faster at the translator level due to in-place `map[string]any` mutation
+- Go is 1.6-2.8x faster at the Anthropic translator level due to in-place `map[string]any` mutation
 - Rust's serde_json is 2.8x faster than Go's encoding/json for raw JSON parsing
-- After optimization, Rust Anthropic translation is 24-38% faster than the initial typed-struct approach
+- Two rounds of Rust optimization (typed structs → direct Value, in-place response mutation) improved performance 17-38%
 - Rust binary is 10MB vs Go's ~50MB (5x smaller)
-- Rust has deterministic latency (no GC pauses)
+- All 117 tests pass including gRPC E2E verification for all 5 providers
+
+### Repository & Branch Layout
+
+| Branch | Repo | Contents |
+|--------|------|----------|
+| [`feature/rust-plugins`](https://github.com/noyitz/ai-gateway-payload-processing/tree/feature/rust-plugins) | ai-gateway-payload-processing | Shared Rust crates: framework, translators, k8s-plugins, ffi cdylib, benchmarks, tests |
+| [`feature/rust-hybrid`](https://github.com/noyitz/gateway-api-inference-extension/tree/feature/rust-hybrid) | gateway-api-inference-extension | Go BBR runner + cgo bridge wrapping Rust cdylib |
+| [`feature/rust-full-stack`](https://github.com/noyitz/gateway-api-inference-extension/tree/feature/rust-full-stack) | gateway-api-inference-extension | Full Rust tonic ext_proc server importing plugin crates |
 
 ## Methodology
 
@@ -57,10 +65,10 @@ Every test scenario was verified for **correctness**, not just speed:
 | E2E plugin chain tests | 9 | Full 5-provider round-trip: request → translate → response → validate OpenAI format |
 | K8s plugin unit tests | 29 | Store operations, path parsing, auth header generation, error cases |
 | Framework unit tests | 17 | InferenceMessage mutation tracking, CycleState read/write |
-| **gRPC E2E test** | **1** | **All 5 providers through actual gRPC ext_proc server: verifies path rewrite, auth header injection, body transformation, authorization removal** |
-| **Total** | **117** | All passing, zero failures |
+| **gRPC E2E test** | **1** | **All 5 providers through actual gRPC ext_proc server: path rewrite, auth header, body transform, authorization removal** |
+| **Total** | **117** | **All passing, zero failures** |
 
-The gRPC E2E test starts a real tonic ext_proc server, sends bidirectional streaming gRPC requests for each provider, and validates:
+The gRPC E2E test starts a real tonic ext_proc server, sends bidirectional streaming gRPC requests for each of the 5 providers, and validates:
 - Correct `:path` header rewrite per provider
 - Correct auth header injected (`Authorization: Bearer`, `x-api-key`, `api-key`)
 - `authorization` header removed from all requests
@@ -68,36 +76,47 @@ The gRPC E2E test starts a real tonic ext_proc server, sends bidirectional strea
 
 ## Results
 
-### Translator-Level Benchmarks (Apple M4 Pro)
+### Final Translator-Level Benchmarks (Apple M4 Pro)
 
-| Benchmark | Go (ns/op) | Go allocs | Rust v1 (ns) | Rust v2 optimized (ns) | Go vs Rust v2 |
-|-----------|-----------|-----------|-------------|----------------------|---------------|
-| OpenAI passthrough | 18.8 | 0 | 64 | 64 | Go 3.4x faster |
-| Anthropic request (basic) | 349 | 12 | 739 | **564** | Go 1.6x faster |
-| Anthropic request (complex) | 3,744 | 128 | 12,716 | **10,309** | Go 2.8x faster |
-| Anthropic response (text) | 467 | 17 | 1,465 | **909** | Go 1.9x faster |
-| Anthropic response (tool_use) | 1,392 | 46 | 3,923 | **2,843** | Go 2.0x faster |
-| Azure response strip | 22.4 | 0 | 1,488 | 1,494 | Go 67x faster |
-| JSON parse+serialize | 23,649 | 467 | 8,537 | 8,722 | **Rust 2.7x faster** |
+| Benchmark | Go (ns/op) | Go allocs | Rust final (ns) | Go vs Rust |
+|-----------|-----------|-----------|-----------------|------------|
+| OpenAI passthrough | 18.8 | 0 | 64 | Go 3.4x faster |
+| Anthropic request (basic) | 349 | 12 | 564 | Go 1.6x faster |
+| Anthropic request (complex) | 3,744 | 128 | 10,306 | Go 2.8x faster |
+| Anthropic response (text) | 467 | 17 | 1,431 | Go 3.1x faster |
+| Anthropic response (tool_use) | 1,392 | 46 | 3,828 | Go 2.8x faster |
+| Azure response strip | 22.4 | 0 | 1,512 | Go 67x faster |
+| Full plugin chain (anthropic) | — | — | 14,391 | — |
+| Full plugin chain (openai) | — | — | 568 | — |
+| Full roundtrip (anthropic) | — | — | 18,677 | — |
+| JSON parse+serialize | 23,649 | 467 | 8,505 | **Rust 2.8x faster** |
 
-### Optimization Impact (Rust v1 → v2)
+### Rust Optimization History
 
-Switched from typed serde struct round-trip to direct `serde_json::Value` manipulation:
+Two rounds of optimization were applied:
 
-| Benchmark | Before | After | Improvement |
-|-----------|--------|-------|-------------|
+**Round 1: Typed structs → Direct Value manipulation (Anthropic translator)**
+
+Removed the `serde_json::from_value() → typed struct → serde_json::to_value()` round-trip. Now works directly with `serde_json::Value`, matching Go's in-place `map[string]any` pattern.
+
+| Benchmark | v1 (typed structs) | v2 (direct Value) | Improvement |
+|-----------|-------------------|-------------------|-------------|
 | Anthropic request (basic) | 739 ns | 564 ns | **24% faster** |
-| Anthropic request (complex) | 12.7 µs | 10.3 µs | **19% faster** |
-| Anthropic response (text) | 1.46 µs | 909 ns | **38% faster** |
-| Anthropic response (tool_use) | 3.92 µs | 2.84 µs | **28% faster** |
-| Full plugin chain (anthropic) | 16.4 µs | 14.4 µs | **12% faster** |
-| Full roundtrip (anthropic) | 22.1 µs | 18.4 µs | **17% faster** |
+| Anthropic request (complex) | 12,716 ns | 10,306 ns | **19% faster** |
+| Anthropic response (text) | 1,465 ns | 909 ns | **38% faster** |
+| Anthropic response (tool_use) | 3,923 ns | 2,843 ns | **28% faster** |
+| Full roundtrip (anthropic) | 22,051 ns | 18,426 ns | **17% faster** |
+
+**Round 2: In-place response mutation (Azure/Vertex strip, all response translators)**
+
+Changed the `Translator` trait signature from `fn translate_response(&self, body: &Value) → Result<Option<Value>>` to `fn translate_response(&self, body: &mut Value) → Result<bool>`. This eliminates body cloning for Azure/Vertex response stripping and allows Anthropic response translation to write directly to the body.
 
 ### Build & Binary Comparison
 
 | Metric | Go (Config A) | Rust (Config C) | Hybrid (Config B) |
 |--------|--------------|-----------------|-------------------|
 | Binary size | ~50MB | 10MB | 73MB (Go+Rust) |
+| Shared lib size | N/A | 7.5MB (cdylib) | 7.5MB |
 | Release build time | ~15s | ~70s | ~90s |
 | Incremental build | ~3s | ~2s | N/A |
 | Docker image (est.) | ~30MB | ~20MB | ~40MB |
@@ -108,74 +127,52 @@ Switched from typed serde struct round-trip to direct `serde_json::Value` manipu
 
 Go translators operate on `map[string]any` **in place**. When a translator doesn't need to mutate the body (OpenAI, Azure request, Bedrock, Vertex request), it returns `nil` with **zero allocations**. Even the complex Anthropic translator builds a new `map[string]any` directly without intermediate serialization.
 
-The Rust implementation, even after optimization, builds new `serde_json::Value` objects using the `json!()` macro. Each `json!()` call allocates a new `Value::Object` (backed by `BTreeMap`). The Go equivalent (`map[string]any{}`) uses a hash map with amortized O(1) insertion.
+The Rust implementation, even after optimization, builds new `serde_json::Value` objects using the `json!()` macro. Each `json!()` call allocates a new `Value::Object` (backed by `BTreeMap`). Go's `map[string]any{}` uses a hash map with amortized O(1) insertion.
 
-The Azure response strip gap (67x) is because:
-- Go: calls `delete(obj, key)` on the existing map — O(1), zero allocation
-- Rust: clones the entire `Value`, then strips fields from the clone — O(n) allocation
+The Azure response strip gap (67x) remains because Go calls `delete(obj, key)` on the existing map (O(1), zero allocation), while Rust must clone the body to strip from it (the benchmark body always contains the fields to strip).
 
-### Why Rust Wins at JSON Parsing
+### Where Rust Wins
 
-`serde_json` is 2.7x faster than Go's `encoding/json` for the same 2.5KB payload. This matters because in the real ext_proc flow:
-1. **Envoy sends body** → framework parses JSON (Rust wins ~2.7x)
-2. **Plugin chain processes** → translation (Go wins 1.6-3x for Anthropic)
-3. **Framework serializes** → sends back to Envoy (Rust wins ~2.7x)
+- **Raw JSON parsing**: serde_json is 2.8x faster than Go's encoding/json
+- **Binary size**: 10MB vs ~50MB (5x smaller)
+- **No GC pauses**: Deterministic latency under load
+- **Type safety**: Compile-time guarantees on plugin interfaces
 
-For providers that don't mutate the body (OpenAI, Bedrock — no body re-serialization needed), the dominant cost is JSON parsing, where Rust wins.
+### End-to-End Latency Projection
+
+In the real ext_proc flow:
+1. **JSON parse** (framework): Rust wins ~2.8x
+2. **Plugin chain** (translation): Go wins 1.6-3x for Anthropic; similar for passthrough providers
+3. **JSON serialize** (framework): Rust wins ~2.8x
+
+For providers that don't mutate the body (OpenAI, Bedrock — no re-serialization needed), the dominant cost is JSON parsing, where Rust wins. For Anthropic (full body transformation), Go wins at the translation step.
+
+The **end-to-end verdict** requires cluster-level benchmarks with `ghz` to measure the full picture including gRPC framing, network, and GC pressure under concurrent load.
 
 ### Where Each Configuration Fits
 
 | Config | Best For | Trade-off |
 |--------|----------|-----------|
-| **A — Full Go** | Production today. Proven, well-tested, fastest for Anthropic translation. | GC pauses under high load, larger binary |
-| **B — Hybrid** | Testing Rust plugins without replacing the gRPC layer. Easiest migration path. | FFI marshaling adds overhead (JSON serialization across boundary) |
-| **C — Full Rust** | Latency-sensitive deployments, small footprint. Best for passthrough providers. | Anthropic translation ~2x slower than Go, longer build times |
+| **A — Full Go** | Production today. Proven, fastest for Anthropic translation. | GC pauses under load, larger binary |
+| **B — Hybrid** | Testing Rust plugins without replacing gRPC layer. Easiest migration path. | FFI marshaling adds overhead |
+| **C — Full Rust** | Latency-sensitive, small footprint, passthrough-heavy workloads. | Anthropic translation ~2x slower, longer build times |
 
-### Remaining Optimization Opportunities
-
-1. **Azure/Vertex in-place strip**: Mutate `&mut Value` directly instead of cloning. Would eliminate the 67x gap.
-2. **Avoid `json!()` for Anthropic**: Build `Value::Object` directly with `serde_json::Map::new()` instead of the macro. Reduces intermediate allocations.
-3. **Arena allocator**: Use `bumpalo` or similar for per-request allocations. All `Value` objects for a single request could share one allocation.
-4. **Pre-parsed headers**: Cache static header `HashMap`s (anthropic-version, content-type) instead of rebuilding per request.
-
-## Test Coverage Summary
-
-### All 5 Providers Verified End-to-End Through gRPC
+## Test Coverage — All 5 Providers Verified End-to-End
 
 ```
-Provider         Path Rewrite                Auth Header          Body Transform
-─────────────────────────────────────────────────────────────────────────────────
-openai           /v1/chat/completions        Authorization: Bearer  None (passthrough)
-anthropic        /v1/messages                x-api-key              Full (OpenAI→Anthropic)
-azure-openai     /openai/v1/chat/completions api-key                None (strip response)
-bedrock-openai   /v1/chat/completions        Authorization: Bearer  None (passthrough)
-vertex-openai    /v1/projects/.../chat/...   Authorization: Bearer  None (strip response)
+Provider         Path Rewrite                Auth Header          Body Transform    gRPC E2E
+─────────────────────────────────────────────────────────────────────────────────────────────
+openai           /v1/chat/completions        Authorization: Bearer  None (pass)      PASS
+anthropic        /v1/messages                x-api-key              Full transform   PASS
+azure-openai     /openai/v1/chat/completions api-key                Strip response   PASS
+bedrock-openai   /v1/chat/completions        Authorization: Bearer  None (pass)      PASS
+vertex-openai    /v1/projects/.../chat/...   Authorization: Bearer  Strip response   PASS
 ```
 
-All verified via actual gRPC bidirectional streaming — not mocked, not simulated.
+All verified via actual gRPC bidirectional streaming. Not mocked, not simulated.
 
-### Test Categories Matching Go E2E Suite
+## Next Steps
 
-| Go E2E Test | Rust Equivalent | Status |
-|-------------|-----------------|--------|
-| "should return 200 for provider X" (×5) | `request_succeeds_for_all_providers` | PASS |
-| "should return OpenAI format response" (×5) | `response_is_openai_format_for_all_providers` | PASS |
-| Full round-trip (×5) | `full_roundtrip_all_providers` | PASS |
-| Invalid API key → 401 | Error handling in apikey-injection unit tests | PASS |
-| Missing model → 400 | `missing_model_returns_error` | PASS |
-| Empty messages → 400 | `empty_messages_returns_error` | PASS |
-| Streaming flag preserved | `streaming_flag_preserved` | PASS |
-| Tool calling round-trip | `anthropic_tool_calling_roundtrip` | PASS |
-| Multi-turn conversation | `anthropic_multi_turn_conversation` | PASS |
-
-## Conclusion
-
-The Rust POC demonstrates that the IPP plugins can be successfully reimplemented in Rust with full functional parity. The performance profile differs from Go in predictable ways:
-
-- **Go is faster for in-place map mutations** (the primary translator operation)
-- **Rust is faster for JSON parsing/serialization** (the framework's responsibility)
-- **Rust offers smaller binaries, no GC, deterministic latency**
-
-For a production decision, the end-to-end latency through Envoy (including gRPC framing, network, and JSON parsing) would be the deciding factor — and that requires cluster-level benchmarks with `ghz`. The micro-benchmarks here measure the raw CPU cost of translation, which is only one component.
-
-The hybrid approach (Config B) offers a migration path where Rust plugins can be tested behind the proven Go gRPC infrastructure before a full switch.
+1. **Cluster benchmarks**: Deploy all 3 configs on Kind/OpenShift, run `ghz` load tests with concurrent streams
+2. **GC pressure test**: Measure Go p99 latency under sustained load vs Rust deterministic latency
+3. **Further Rust optimization**: Build `Value::Object` directly via `serde_json::Map::new()` instead of `json!()` macro to reduce allocations

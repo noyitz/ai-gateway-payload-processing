@@ -36,10 +36,10 @@ impl Translator for BedrockOpenAiTranslator {
 
     fn translate_response(
         &self,
-        _body: &Value,
+        _body: &mut Value,
         _model: &str,
-    ) -> Result<Option<Value>, PluginError> {
-        Ok(None)
+    ) -> Result<bool, PluginError> {
+        Ok(false)
     }
 }
 
@@ -74,10 +74,9 @@ mod tests {
 
     #[test]
     fn response_noop() {
-        let body = json!({"choices": []});
-        assert!(BedrockOpenAiTranslator
-            .translate_response(&body, "m")
-            .unwrap()
-            .is_none());
+        let mut body = json!({"choices": []});
+        assert!(!BedrockOpenAiTranslator
+            .translate_response(&mut body, "m")
+            .unwrap());
     }
 }

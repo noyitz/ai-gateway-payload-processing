@@ -49,15 +49,10 @@ impl Translator for AzureOpenAiTranslator {
 
     fn translate_response(
         &self,
-        body: &Value,
+        body: &mut Value,
         _model: &str,
-    ) -> Result<Option<Value>, PluginError> {
-        let mut body = body.clone();
-        if self.stripper.strip(&mut body) {
-            Ok(Some(body))
-        } else {
-            Ok(None)
-        }
+    ) -> Result<bool, PluginError> {
+        Ok(self.stripper.strip(body))
     }
 }
 
@@ -84,34 +79,34 @@ mod tests {
 
     #[test]
     fn response_strips_filter_results() {
-        let body = json!({
+        let mut body = json!({
             "id": "chatcmpl-123",
             "prompt_filter_results": [{"index": 0}],
             "choices": [
                 {"index": 0, "content_filter_results": {"hate": {"filtered": false}}, "message": {"content": "Hi"}}
             ]
         });
-        let result = AzureOpenAiTranslator::new()
-            .translate_response(&body, "gpt-4o")
-            .unwrap()
+        let mutated = AzureOpenAiTranslator::new()
+            .translate_response(&mut body, "gpt-4o")
             .unwrap();
-        assert!(result.get("prompt_filter_results").is_none());
-        assert!(result["choices"][0]
+        assert!(mutated);
+        assert!(body.get("prompt_filter_results").is_none());
+        assert!(body["choices"][0]
             .get("content_filter_results")
             .is_none());
-        assert!(result["choices"][0].get("message").is_some());
+        assert!(body["choices"][0].get("message").is_some());
     }
 
     #[test]
     fn response_no_mutation_when_clean() {
-        let body = json!({
+        let mut body = json!({
             "id": "chatcmpl-123",
             "choices": [{"index": 0, "message": {"content": "Hi"}}]
         });
-        let result = AzureOpenAiTranslator::new()
-            .translate_response(&body, "gpt-4o")
+        let mutated = AzureOpenAiTranslator::new()
+            .translate_response(&mut body, "gpt-4o")
             .unwrap();
-        assert!(result.is_none());
+        assert!(!mutated);
     }
 
     #[test]

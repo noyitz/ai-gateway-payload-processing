@@ -124,10 +124,10 @@ impl ResponseProcessor for ApiTranslationPlugin {
             .cloned()
             .unwrap_or_default();
 
-        let translated = translator.translate_response(&response.body, &model)?;
+        let mutated = translator.translate_response(&mut response.body, &model)?;
 
-        if let Some(body) = translated {
-            response.set_body(body);
+        if mutated {
+            response.mark_body_mutated();
         }
 
         Ok(())
