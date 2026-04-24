@@ -66,12 +66,9 @@ impl ExternalProcessor for ExtProcServer {
                                 &mut inference_request,
                             )
                         } else {
-                            Ok(ProcessingResponse {
-                                response: Some(Response::RequestHeaders(
-                                    HeadersResponse::default(),
-                                )),
-                                ..Default::default()
-                            })
+                            // Defer response — wait for body before running plugins.
+                            // This matches Go's behavior in BUFFERED mode.
+                            continue;
                         }
                     }
                     Some(processing_request::Request::RequestBody(ref body)) => {
@@ -105,12 +102,7 @@ impl ExternalProcessor for ExtProcServer {
                                 &mut inference_response,
                             )
                         } else {
-                            Ok(ProcessingResponse {
-                                response: Some(Response::ResponseHeaders(
-                                    HeadersResponse::default(),
-                                )),
-                                ..Default::default()
-                            })
+                            continue;
                         }
                     }
                     Some(processing_request::Request::ResponseBody(ref body)) => {
