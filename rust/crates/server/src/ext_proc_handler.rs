@@ -117,12 +117,14 @@ impl ExternalProcessor for ExtProcServer {
                         response_body_buf.extend_from_slice(&body.body);
 
                         if body.end_of_stream {
-                            if let Ok(parsed) =
-                                serde_json::from_slice::<serde_json::Value>(&response_body_buf)
-                            {
-                                inference_response.inner.body = parsed;
-                            } else {
-                                debug!("Failed to parse response body as JSON");
+                            match serde_json::from_slice::<serde_json::Value>(&response_body_buf) {
+                                Ok(parsed) => {
+                                    warn!(body_size = response_body_buf.len(), "Parsed response body");
+                                    inference_response.inner.body = parsed;
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, body = %String::from_utf8_lossy(&response_body_buf), "Failed to parse response body as JSON");
+                                }
                             }
                             run_response_plugins_and_respond(
                                 &resp_plugins,
@@ -224,10 +226,11 @@ fn run_request_plugins_and_respond(
 ) -> Result<ProcessingResponse, Status> {
     for plugin in plugins {
         if let Err(e) = plugin.process_request(cycle_state, request) {
-            error!(plugin = plugin.name(), error = %e, "Request plugin failed");
+            warn!(plugin = plugin.name(), error = %e, "Request plugin failed");
             return Err(Status::internal(e.to_string()));
         }
     }
+    warn!(path = ?request.headers.get(":path"), "Request plugins complete");
 
     let has_path_mutation = request.mutated_headers().contains_key(":path");
 
@@ -253,10 +256,11 @@ fn run_response_plugins_and_respond(
 ) -> Result<ProcessingResponse, Status> {
     for plugin in plugins {
         if let Err(e) = plugin.process_response(cycle_state, response) {
-            error!(plugin = plugin.name(), error = %e, "Response plugin failed");
+            warn!(plugin = plugin.name(), error = %e, "Response plugin failed");
             return Err(Status::internal(e.to_string()));
         }
     }
+    warn!(body_mutated = response.body_mutated(), "Response plugins complete");
 
     let common = CommonResponse {
         header_mutation: build_header_mutation(&response.inner),
