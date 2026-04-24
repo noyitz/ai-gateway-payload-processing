@@ -1,0 +1,37 @@
+{
+  "id": "msg_01YZpBsmK7CwMbg9qrXEVWcP",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-3-5-sonnet-20241022",
+  "content": [
+    {
+      "type": "text",
+      "text": "I'll check both the weather and air quality for San Francisco."
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_01A09q90qw90lq917835lh9h",
+      "name": "get_weather",
+      "input": {
+        "location": "San Francisco",
+        "unit": "celsius"
+      }
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_01B29r80rw80mr928946mi0i",
+      "name": "get_air_quality",
+      "input": {
+        "location": "San Francisco"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 350,
+    "output_tokens": 120,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  }
+}

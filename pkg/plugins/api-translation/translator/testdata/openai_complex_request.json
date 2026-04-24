@@ -1,0 +1,51 @@
+{
+  "model": "claude-3-5-sonnet-20241022",
+  "messages": [
+    {"role": "system", "content": "You are a helpful weather assistant. Always provide temperatures in both Celsius and Fahrenheit."},
+    {"role": "user", "content": "What's the weather like in New York City today?"},
+    {"role": "assistant", "content": "I'll check the weather for you.", "tool_calls": [{"id": "call_weather_1", "type": "function", "function": {"name": "get_weather", "arguments": "{\"location\": \"New York City\", \"unit\": \"celsius\"}"}}]},
+    {"role": "tool", "tool_call_id": "call_weather_1", "content": "{\"temperature\": 22, \"condition\": \"partly cloudy\", \"humidity\": 65, \"wind_speed\": 15}"},
+    {"role": "assistant", "content": "The weather in New York City is currently 22°C (72°F) with partly cloudy skies. Humidity is at 65% with winds at 15 km/h."},
+    {"role": "user", "content": "What about San Francisco? Also, what's the air quality index?"},
+    {"role": "assistant", "content": "Let me check both for you.", "tool_calls": [{"id": "call_weather_2", "type": "function", "function": {"name": "get_weather", "arguments": "{\"location\": \"San Francisco\", \"unit\": \"celsius\"}"}}, {"id": "call_aqi_1", "type": "function", "function": {"name": "get_air_quality", "arguments": "{\"location\": \"San Francisco\"}"}}]},
+    {"role": "tool", "tool_call_id": "call_weather_2", "content": "{\"temperature\": 18, \"condition\": \"foggy\", \"humidity\": 80, \"wind_speed\": 20}"},
+    {"role": "tool", "tool_call_id": "call_aqi_1", "content": "{\"aqi\": 42, \"category\": \"good\", \"dominant_pollutant\": \"PM2.5\"}"},
+    {"role": "assistant", "content": "San Francisco is currently 18°C (64°F) with foggy conditions. The air quality index is 42 (Good), with PM2.5 as the dominant pollutant."},
+    {"role": "user", "content": "Compare the two cities' weather side by side."}
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get current weather for a location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {"type": "string", "description": "City name"},
+            "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+          },
+          "required": ["location"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_air_quality",
+        "description": "Get air quality index for a location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {"type": "string", "description": "City name"}
+          },
+          "required": ["location"]
+        }
+      }
+    }
+  ],
+  "max_tokens": 500,
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "stream": false
+}

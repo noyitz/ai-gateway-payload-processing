@@ -1,0 +1,62 @@
+# Docker Compose for benchmarking all 3 configurations.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml up config-a    # Go only
+#   docker compose -f docker/docker-compose.yml up config-b    # Hybrid
+#   docker compose -f docker/docker-compose.yml up config-c    # Rust only
+#   docker compose -f docker/docker-compose.yml up             # All
+#
+# Each config runs on a different port:
+#   Config A (Go):     localhost:8081
+#   Config B (Hybrid): localhost:8082
+#   Config C (Rust):   localhost:8083
+
+services:
+  # --- Config A: Full Go (existing baseline) ---
+  config-a:
+    image: quay.io/opendatahub/odh-ai-gateway-payload-processing:odh-stable
+    ports:
+      - "9014:9004"
+    command:
+      - --grpc-port=9004
+      - --secure-serving=false
+      - --tracing=false
+      - --plugin
+      - "body-field-to-header:model-extractor:{\"fieldName\":\"model\",\"headerName\":\"X-Gateway-Model-Name\"}"
+      - --plugin
+      - "model-provider-resolver:model-provider-resolver"
+      - --plugin
+      - "api-translation:api-translation:{\"vertexOpenAI\":{\"project\":\"test-project\",\"location\":\"us-central1\",\"endpoint\":\"openapi\"}}"
+      - --plugin
+      - "apikey-injection:apikey-injection"
+
+  # --- Config B: Hybrid (Go infra + Rust plugins via FFI) ---
+  config-b:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.hybrid
+      platforms:
+        - linux/amd64
+    ports:
+      - "9024:9004"
+    command:
+      - --grpc-port=9004
+      - --secure-serving=false
+      - --tracing=false
+      - --plugin
+      - "rust-bridge:rust-bridge:{\"vertexOpenAI\":{\"project\":\"test-project\",\"location\":\"us-central1\",\"endpoint\":\"openapi\"}}"
+
+  # --- Config C: Full Rust ---
+  config-c:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust
+      platforms:
+        - linux/amd64
+    ports:
+      - "9034:9004"
+    command:
+      - --grpc-port=9004
+      - --vertex-project=test-project
+      - --vertex-location=us-central1
+      - --vertex-endpoint=openapi

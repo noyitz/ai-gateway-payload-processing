@@ -1,0 +1,39 @@
+{
+  "id": "chatcmpl-9XY1Z2abc3def4ghi",
+  "object": "chat.completion",
+  "created": 1719512345,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The capital of France is Paris. It has been the capital since the late 10th century and is the country's largest city with a population of over 2 million in the city proper."
+      },
+      "finish_reason": "stop",
+      "content_filter_results": {
+        "hate": {"filtered": false, "severity": "safe"},
+        "self_harm": {"filtered": false, "severity": "safe"},
+        "sexual": {"filtered": false, "severity": "safe"},
+        "violence": {"filtered": false, "severity": "safe"}
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 14,
+    "completion_tokens": 42,
+    "total_tokens": 56
+  },
+  "prompt_filter_results": [
+    {
+      "prompt_index": 0,
+      "content_filter_results": {
+        "hate": {"filtered": false, "severity": "safe"},
+        "self_harm": {"filtered": false, "severity": "safe"},
+        "sexual": {"filtered": false, "severity": "safe"},
+        "violence": {"filtered": false, "severity": "safe"}
+      }
+    }
+  ],
+  "system_fingerprint": "fp_abc123def456"
+}

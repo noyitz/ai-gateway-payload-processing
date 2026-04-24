@@ -1,0 +1,20 @@
+{
+  "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-3-5-sonnet-20241022",
+  "content": [
+    {
+      "type": "text",
+      "text": "Here's a side-by-side comparison of New York City and San Francisco weather:\n\n| Metric | New York City | San Francisco |\n|--------|--------------|---------------|\n| Temperature | 22°C (72°F) | 18°C (64°F) |\n| Condition | Partly Cloudy | Foggy |\n| Humidity | 65% | 80% |\n| Wind Speed | 15 km/h | 20 km/h |\n| Air Quality | N/A | 42 (Good) |\n\nNew York City is warmer with clearer skies, while San Francisco has its characteristic fog with better air quality monitoring data available."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 458,
+    "output_tokens": 152,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  }
+}
