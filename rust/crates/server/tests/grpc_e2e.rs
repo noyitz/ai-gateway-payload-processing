@@ -153,9 +153,9 @@ fn make_request_headers(path: &str) -> ProcessingRequest {
         request: Some(ProcReq::RequestHeaders(HttpHeaders {
             headers: Some(HeaderMap {
                 headers: vec![
-                    HeaderValue { key: ":path".into(), value: path.into(), ..Default::default() },
-                    HeaderValue { key: ":method".into(), value: "POST".into(), ..Default::default() },
-                    HeaderValue { key: "content-type".into(), value: "application/json".into(), ..Default::default() },
+                    HeaderValue { key: ":path".into(), raw_value: path.as_bytes().to_vec(), ..Default::default() },
+                    HeaderValue { key: ":method".into(), raw_value: b"POST".to_vec(), ..Default::default() },
+                    HeaderValue { key: "content-type".into(), raw_value: b"application/json".to_vec(), ..Default::default() },
                 ],
             }),
             end_of_stream: false,
@@ -268,7 +268,14 @@ async fn all_providers_process_request_through_grpc() {
                                         .set_headers
                                         .iter()
                                         .filter_map(|h| {
-                                            h.header.as_ref().map(|hv| (hv.key.clone(), hv.value.clone()))
+                                            h.header.as_ref().map(|hv| {
+                                                let val = if !hv.raw_value.is_empty() {
+                                                    String::from_utf8_lossy(&hv.raw_value).to_string()
+                                                } else {
+                                                    hv.value.clone()
+                                                };
+                                                (hv.key.clone(), val)
+                                            })
                                         })
                                         .collect();
 

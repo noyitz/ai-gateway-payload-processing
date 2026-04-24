@@ -323,6 +323,9 @@ message HeaderValue {
   string value = 2 [
     (validate.rules).string = {max_bytes: 16384 well_known_regex: HTTP_HEADER_VALUE strict: false}
   ];
+
+  // Header value as bytes which is used instead of `value` in Envoy >= 1.29.
+  bytes raw_value = 3;
 }
 
 // Header name/value pair plus option to control append behavior.

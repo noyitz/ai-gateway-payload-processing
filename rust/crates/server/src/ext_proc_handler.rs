@@ -158,7 +158,12 @@ fn extract_headers(headers: &HttpHeaders, msg: &mut InferenceMessage) {
     if let Some(ref header_map) = headers.headers {
         for hv in &header_map.headers {
             if !hv.key.is_empty() {
-                msg.headers.insert(hv.key.clone(), hv.value.clone());
+                let value = if !hv.raw_value.is_empty() {
+                    String::from_utf8_lossy(&hv.raw_value).to_string()
+                } else {
+                    hv.value.clone()
+                };
+                msg.headers.insert(hv.key.clone(), value);
             }
         }
     }
@@ -177,7 +182,7 @@ fn build_header_mutation(msg: &impl HasMutations) -> Option<HeaderMutation> {
             .map(|(k, v)| HeaderValueOption {
                 header: Some(HeaderValue {
                     key: k.clone(),
-                    value: v.clone(),
+                    raw_value: v.as_bytes().to_vec(),
                     ..Default::default()
                 }),
                 ..Default::default()
