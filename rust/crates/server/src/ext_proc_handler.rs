@@ -230,7 +230,13 @@ fn run_request_plugins_and_respond(
             return Err(Status::internal(e.to_string()));
         }
     }
-    warn!(path = ?request.headers.get(":path"), "Request plugins complete");
+    // When body is mutated, update content-length to match new body size.
+    // This is required by Envoy — mismatched content-length causes stream reset.
+    if request.body_mutated() {
+        if let Ok(body_bytes) = serde_json::to_vec(&request.body) {
+            request.set_header("content-length", body_bytes.len().to_string());
+        }
+    }
 
     let common = CommonResponse {
         header_mutation: build_header_mutation(&request.inner),
@@ -257,7 +263,11 @@ fn run_response_plugins_and_respond(
             return Err(Status::internal(e.to_string()));
         }
     }
-    warn!(body_mutated = response.body_mutated(), "Response plugins complete");
+    if response.body_mutated() {
+        if let Ok(body_bytes) = serde_json::to_vec(&response.body) {
+            response.set_header("content-length", body_bytes.len().to_string());
+        }
+    }
 
     let common = CommonResponse {
         header_mutation: build_header_mutation(&response.inner),
