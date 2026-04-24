@@ -232,12 +232,9 @@ fn run_request_plugins_and_respond(
     }
     warn!(path = ?request.headers.get(":path"), "Request plugins complete");
 
-    let has_path_mutation = request.mutated_headers().contains_key(":path");
-
     let common = CommonResponse {
         header_mutation: build_header_mutation(&request.inner),
         body_mutation: build_body_mutation(&request.inner),
-        clear_route_cache: has_path_mutation,
         ..Default::default()
     };
 
