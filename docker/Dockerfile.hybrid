@@ -1,11 +1,7 @@
 # Multi-stage build for the hybrid Go+Rust ext_proc server (Config B).
-# Builds the Rust cdylib first, then the Go binary linked against it.
-#
-# Build: docker build --platform linux/amd64 -f docker/Dockerfile.hybrid -t ipp-hybrid-server .
-# Run:   docker run -p 9004:9004 ipp-hybrid-server
 
 # --- Stage 1: Build Rust cdylib ---
-FROM rust:1.82-slim AS rust-builder
+FROM rust:latest AS rust-builder
 
 RUN apt-get update && apt-get install -y \
     protobuf-compiler \
@@ -23,43 +19,36 @@ RUN cargo build --release -p ipp-ffi \
     && strip target/release/libipp_ffi.so 2>/dev/null || true
 
 # --- Stage 2: Build Go binary ---
-FROM golang:1.25 AS go-builder
+FROM golang:1.23 AS go-builder
 
 RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Copy Rust cdylib and header
+# Copy Rust cdylib
 COPY --from=rust-builder /build/target/release/libipp_ffi.so /usr/local/lib/
-COPY --from=rust-builder /build/crates/ffi/ipp_ffi.h /usr/local/include/
 
-# Copy Go bridge source
+# Copy Go bridge source (includes ipp_ffi.h for cgo)
 COPY go-bridge/ ./go-bridge/
-
-# Copy Rust header for cgo include path
-COPY rust/crates/ffi/ipp_ffi.h ./rust/crates/ffi/ipp_ffi.h
 
 WORKDIR /build/go-bridge
 
-# Adjust cgo paths for Docker build
 ENV CGO_ENABLED=1
-ENV CGO_LDFLAGS="-L/usr/local/lib -lipp_ffi"
+ENV CGO_LDFLAGS="-L/usr/local/lib -lipp_ffi -Wl,-rpath,/usr/local/lib"
 
-RUN go mod download && \
-    go build -o /bbr-hybrid .
+RUN go mod download && go build -o /bbr-hybrid .
 
 # --- Stage 3: Runtime ---
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3t64 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=rust-builder /build/target/release/libipp_ffi.so /usr/local/lib/
 COPY --from=go-builder /bbr-hybrid /bbr-hybrid
 
-ENV LD_LIBRARY_PATH=/usr/local/lib
-
-RUN ldconfig
-
+RUN ldconfig && useradd -r -u 1001 ipp
 USER 1001:1001
 
 EXPOSE 9004 9005

@@ -2,7 +2,7 @@ package main
 
 /*
 #cgo LDFLAGS: -L${SRCDIR}/../rust/target/release -lipp_ffi
-#include "../rust/crates/ffi/ipp_ffi.h"
+#include "ipp_ffi.h"
 #include <stdlib.h>
 */
 import "C"
