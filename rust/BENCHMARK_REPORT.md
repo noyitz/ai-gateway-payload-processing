@@ -94,8 +94,18 @@ Envoy → [Rust tonic gRPC server] → [C FFI call] → [Go plugin chain (c-shar
 - **Simulator**: llm-katan at 3.13.21.181 (echo mode, validates API keys)
 - **Gateway**: Dedicated `bench-gateway` in `ipp-benchmark` namespace, `BUFFERED` ext_proc mode
 - **ExternalModel**: `sim-anthropic` (provider: anthropic) — triggers full body transformation
-- **Tool**: `hey` HTTP load testing — 5000 requests per test
+- **Load generator**: `hey` with `-q 10 -c 10` (constant 100 req/s, 10 connections) for 60 seconds — addresses coordinated omission by maintaining constant request rate regardless of server response time
+- **Load generator host**: EC2 t3.medium in us-east-2 (same AWS region as the cluster) — 2.7ms connect time to the gateway ELB, eliminating laptop WiFi/ISP jitter from measurements
+- **CPU/Memory monitoring**: `kubectl top pods` sampled during sustained load
 - **All 4 configs run on the same cluster, same node, same gateway, same simulator — only the ext_proc backend changes between tests**
+
+### Why we test from an AWS VM, not a laptop
+
+Running from a developer laptop adds 80-100ms of variable network latency (WiFi, ISP routing, cross-region) that hides the actual ext_proc processing differences. From an EC2 instance in the same AWS region, the network round-trip to the gateway ELB is ~3ms, so a 1ms difference in ext_proc processing actually shows up in the results.
+
+Network latency comparison:
+- **Laptop → ELB**: ~90ms connect, ~100ms total (variable)
+- **EC2 us-east-2 → ELB**: ~2.7ms connect, ~10ms total (stable)
 
 ### What each request does
 
@@ -133,33 +143,33 @@ Envoy → [Rust tonic gRPC server] → [C FFI call] → [Go plugin chain (c-shar
 | **C** | Rust | Rust | 85 | 99ms | 173ms | 407ms |
 | **D** | Rust | Go (FFI) | **90** | **101ms** | **161ms** | **205ms** |
 
-### Constant Rate Test: 100 req/s sustained for 60 seconds (addresses coordinated omission)
+### Constant Rate Test: 100 req/s sustained for 60 seconds
 
-Regular load tests (like `hey` without rate limiting) slow down when the server is slow — this hides GC pauses and I/O stalls. A constant-rate test sends requests at a fixed rate regardless of server response time, exposing the real impact of pauses on tail latency.
+Sent from an EC2 instance in the same AWS region. Constant request rate (addresses coordinated omission — sends at fixed rate regardless of server response time, so GC pauses and I/O stalls are exposed in the latency percentiles).
 
-| Config | Server | Plugins | Req/s | p50 | p95 | p99 | CPU | Memory |
-|--------|--------|---------|-------|-----|-----|-----|-----|--------|
-| A | Go | Go | 91.7 | 99ms | 158ms | 209ms | 58m | 113Mi |
-| B | Go | Rust (FFI) | 93.8 | 97ms | 158ms | 189ms | 76m | 36Mi |
-| **C** | **Rust** | **Rust** | **93.9** | **97ms** | **156ms** | **183ms** | **37m** | **17Mi** |
-| D | Rust | Go (FFI) | 87.8 | 101ms | 174ms | 191ms | 81m | 80Mi |
+| Config | Server | Plugins | p50 | p95 | p99 | CPU (under load) | Memory |
+|--------|--------|---------|-----|-----|-----|-----------------|--------|
+| A | Go | Go | 23.3ms | 29.7ms | 48.9ms | 26m | 114Mi |
+| B | Go | Rust (FFI) | 23.5ms | 30.0ms | 48.7ms | 81m | 36Mi |
+| **C** | **Rust** | **Rust** | **23.9ms** | **30.8ms** | **49.7ms** | **11m** | **17Mi** |
+| D | Rust | Go (FFI) | 23.4ms | 29.7ms | 48.2ms | 81m | 80Mi |
 
-CPU = millicores under sustained load (measured via `kubectl top pods` during test).
-Memory = RSS under sustained load.
+All configs achieved 100 req/s (target rate) with 100% success rate.
+CPU = millicores under sustained load. Memory = RSS under sustained load. Both measured via `kubectl top pods` during the test.
 
 ### Key Findings
 
-1. **Full Rust (Config C) uses 36% less CPU and 85% less memory** than Full Go (Config A) — 37m CPU / 17Mi memory vs 58m CPU / 113Mi memory — for the same throughput. This is the strongest argument for Rust: same performance with dramatically fewer resources.
+1. **Latency is identical across all 4 configs** — p50 ranges from 23.3ms to 23.9ms, p99 from 48.2ms to 49.7ms. At 100 req/s, the ext_proc processing time is a rounding error. The choice of language does not affect user-facing latency.
 
-2. **Full Rust has the best p99** at 183ms vs Go's 209ms. With constant-rate testing that exposes GC pauses, Rust's lack of garbage collection gives it consistently better tail latency.
+2. **Full Rust (Config C) uses 58% less CPU** than Full Go (Config A) — 11m vs 26m millicores for the same throughput. Same work, less than half the CPU.
 
-3. **Memory usage is dramatically different**: Rust 17Mi vs Go 113Mi (6.6x less). At scale with many gateway pods, this translates to significant infrastructure cost savings.
+3. **Full Rust uses 85% less memory** — 17Mi vs 114Mi (6.7x less). At scale with many gateway pods, this translates directly to infrastructure cost savings.
 
-4. **Config D (Rust+Go FFI) uses the most CPU** (81m) and memory (80Mi) because it runs both Go and Rust runtimes simultaneously. This makes it the least efficient option.
+4. **FFI configs (B and D) use the most CPU** (81m each) because they run both Go and Rust runtimes plus JSON marshaling at the FFI boundary. The hybrid approach costs more resources than either pure option.
 
-5. **FFI overhead is negligible** — Config B (93.8 req/s) matches Config A (91.7 req/s), confirming the JSON marshaling at the FFI boundary adds <1ms.
+5. **Go with Rust plugins (Config B) has the best memory profile among hybrids** — 36Mi vs Go's 114Mi. The Rust plugins avoid Go's map allocations.
 
-6. **At this request rate (100 req/s), throughput is equivalent across all configs.** The real differentiator is resource efficiency (CPU + memory), where Rust wins clearly.
+6. **The FFI bridge adds no measurable latency** — Configs A/B and C/D have identical p50/p95/p99 within measurement noise, confirming JSON marshaling at the FFI boundary adds <0.5ms.
 
 ## Test Coverage
 
