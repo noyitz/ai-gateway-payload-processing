@@ -1,5 +1,18 @@
 # IPP Performance Comparison Report: Go vs Rust — Full 2x2 Matrix
 
+## TL;DR — Full Go vs Full Rust
+
+| Metric | Full Go (Config A) | Full Rust (Config C) | Difference |
+|--------|-------------------|---------------------|------------|
+| p50 latency | 8.88ms | 9.38ms | Equivalent |
+| p99 latency | 17.20ms | 16.90ms | Equivalent |
+| CPU under load | 27 millicores | 40 millicores | Go 33% less CPU |
+| Memory | 115 Mi | 17 Mi | **Rust uses 85% less memory (6.8x)** |
+
+Both handle 100 req/s Anthropic translation (the heaviest provider) with identical latency. The main difference is **memory**: Rust uses 17Mi vs Go's 115Mi. At scale with many gateway pods, this is significant.
+
+Measured with `wrk2` (corrects for coordinated omission) from an EC2 instance in the same AWS region (us-east-2) as the cluster, eliminating network noise. CPU/memory captured via `kubectl top pods` during sustained 60-second load.
+
 ## What Was Tested
 
 Four ext_proc configurations compared on an OpenShift cluster, processing Anthropic API translation — the heaviest provider with full request/response body transformation (OpenAI Chat Completions ↔ Anthropic Messages API).
@@ -94,7 +107,7 @@ Envoy → [Rust tonic gRPC server] → [C FFI call] → [Go plugin chain (c-shar
 - **Simulator**: llm-katan at 3.13.21.181 (echo mode, validates API keys)
 - **Gateway**: Dedicated `bench-gateway` in `ipp-benchmark` namespace, `BUFFERED` ext_proc mode
 - **ExternalModel**: `sim-anthropic` (provider: anthropic) — triggers full body transformation
-- **Load generator**: `hey` with `-q 10 -c 10` (constant 100 req/s, 10 connections) for 60 seconds — addresses coordinated omission by maintaining constant request rate regardless of server response time
+- **Load generator**: [`wrk2`](https://github.com/giltene/wrk2) by Gil Tene — constant-rate load generator that corrects for coordinated omission. Uses HdrHistogram for accurate latency percentiles. `-t2 -c10 -d60s -R100` (2 threads, 10 connections, 60 seconds, 100 req/s constant rate).
 - **Load generator host**: EC2 t3.medium in us-east-2 (same AWS region as the cluster) — 2.7ms connect time to the gateway ELB, eliminating laptop WiFi/ISP jitter from measurements
 - **CPU/Memory monitoring**: `kubectl top pods` sampled during sustained load
 - **All 4 configs run on the same cluster, same node, same gateway, same simulator — only the ext_proc backend changes between tests**
@@ -143,33 +156,35 @@ Network latency comparison:
 | **C** | Rust | Rust | 85 | 99ms | 173ms | 407ms |
 | **D** | Rust | Go (FFI) | **90** | **101ms** | **161ms** | **205ms** |
 
-### Constant Rate Test: 100 req/s sustained for 60 seconds
+### Constant Rate Test: 100 req/s sustained for 60 seconds (wrk2)
 
-Sent from an EC2 instance in the same AWS region. Constant request rate (addresses coordinated omission — sends at fixed rate regardless of server response time, so GC pauses and I/O stalls are exposed in the latency percentiles).
+Measured with `wrk2` (by Gil Tene), which corrects for **coordinated omission** — it maintains a constant request rate regardless of server response time. This means GC pauses in Go and I/O stalls in Rust are accurately reflected in the latency percentiles, unlike regular load testers that slow down when the server is slow.
 
-| Config | Server | Plugins | p50 | p95 | p99 | CPU (under load) | Memory |
-|--------|--------|---------|-----|-----|-----|-----------------|--------|
-| A | Go | Go | 23.3ms | 29.7ms | 48.9ms | 26m | 114Mi |
-| B | Go | Rust (FFI) | 23.5ms | 30.0ms | 48.7ms | 81m | 36Mi |
-| **C** | **Rust** | **Rust** | **23.9ms** | **30.8ms** | **49.7ms** | **11m** | **17Mi** |
-| D | Rust | Go (FFI) | 23.4ms | 29.7ms | 48.2ms | 81m | 80Mi |
+Latency uses HdrHistogram (High Dynamic Range Histogram) for accurate percentile recording across the full range.
 
-All configs achieved 100 req/s (target rate) with 100% success rate.
-CPU = millicores under sustained load. Memory = RSS under sustained load. Both measured via `kubectl top pods` during the test.
+| Config | Server | Plugins | p50 | p75 | p90 | p99 | p99.9 | CPU | Memory |
+|--------|--------|---------|-----|-----|-----|-----|-------|-----|--------|
+| A | Go | Go | 8.88ms | 9.69ms | 10.86ms | 17.20ms | 33.18ms | 27m | 115Mi |
+| B | Go | Rust (FFI) | 8.22ms | 9.44ms | 11.30ms | 19.09ms | 38.75ms | 84m | 36Mi |
+| C | Rust | Rust | 9.38ms | 10.27ms | 11.69ms | 16.90ms | 40.67ms | 40m | **17Mi** |
+| D | Rust | Go (FFI) | 8.89ms | 9.66ms | 10.83ms | **16.45ms** | 35.74ms | 48m | 79Mi |
+
+All configs: 6002 requests in 60 seconds, 100% success rate, 0 errors.
+CPU = millicores under sustained load. Memory = RSS. Both measured via `kubectl top pods` at the 30-second mark.
 
 ### Key Findings
 
-1. **Latency is identical across all 4 configs** — p50 ranges from 23.3ms to 23.9ms, p99 from 48.2ms to 49.7ms. At 100 req/s, the ext_proc processing time is a rounding error. The choice of language does not affect user-facing latency.
+1. **Latency is equivalent across all 4 configs** — p50 ranges from 8.2ms to 9.4ms, p99 from 16.5ms to 19.1ms. With wrk2's coordinated omission correction, no GC-induced tail latency spikes are visible at this request rate. Language choice does not affect user-facing latency.
 
-2. **Full Rust (Config C) uses 58% less CPU** than Full Go (Config A) — 11m vs 26m millicores for the same throughput. Same work, less than half the CPU.
+2. **Full Rust uses 85% less memory** — 17Mi vs 115Mi (6.8x less). This is the most significant difference. At scale with many gateway pods, this translates directly to infrastructure cost savings.
 
-3. **Full Rust uses 85% less memory** — 17Mi vs 114Mi (6.7x less). At scale with many gateway pods, this translates directly to infrastructure cost savings.
+3. **Go uses less CPU at this load** — 27m vs 40m. Go's gRPC stack (net/http2) is highly optimized for this workload. However, both are well below 100m (0.1 CPU core).
 
-4. **FFI configs (B and D) use the most CPU** (81m each) because they run both Go and Rust runtimes plus JSON marshaling at the FFI boundary. The hybrid approach costs more resources than either pure option.
+4. **FFI configs use the most CPU** — Config B at 84m and Config D at 48m, because they run both language runtimes plus JSON marshaling at the boundary. The hybrid approach is the least efficient in CPU terms.
 
-5. **Go with Rust plugins (Config B) has the best memory profile among hybrids** — 36Mi vs Go's 114Mi. The Rust plugins avoid Go's map allocations.
+5. **p99 is slightly better with Rust server** — Configs C (16.90ms) and D (16.45ms) both have lower p99 than Config A (17.20ms), suggesting Rust's lack of GC gives a small edge at the tail, though the difference is within noise.
 
-6. **The FFI bridge adds no measurable latency** — Configs A/B and C/D have identical p50/p95/p99 within measurement noise, confirming JSON marshaling at the FFI boundary adds <0.5ms.
+6. **The main advantage of Rust is memory efficiency, not speed.** For a component that processes requests in <10ms, CPU and latency differences are negligible. But 17Mi vs 115Mi per pod matters when you run dozens of gateway instances.
 
 ## Test Coverage
 
