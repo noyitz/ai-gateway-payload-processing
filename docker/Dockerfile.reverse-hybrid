@@ -29,7 +29,6 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /build
 
 COPY --from=go-builder /usr/local/lib/libgo_plugins_ffi.so /usr/local/lib/
-COPY --from=go-builder /build/go-plugins-ffi/libgo_plugins_ffi.h /usr/local/include/
 
 COPY rust/Cargo.toml rust/Cargo.lock* ./
 COPY rust/crates/ ./crates/
