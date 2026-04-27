@@ -13,7 +13,7 @@ use ipp_framework::plugin::{RequestProcessor, ResponseProcessor};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Status, Streaming};
-use tracing::{debug, error, warn};
+use tracing::error;
 
 pub struct ExtProcServer {
     request_plugins: Arc<Vec<Box<dyn RequestProcessor>>>,
@@ -41,7 +41,7 @@ impl ExternalProcessor for ExtProcServer {
         request: Request<Streaming<ProcessingRequest>>,
     ) -> Result<tonic::Response<Self::ProcessStream>, Status> {
         let mut stream = request.into_inner();
-        let (tx, rx) = mpsc::channel(32);
+        let (tx, rx) = mpsc::channel(4);
 
         let req_plugins = self.request_plugins.clone();
         let resp_plugins = self.response_plugins.clone();
@@ -57,7 +57,6 @@ impl ExternalProcessor for ExtProcServer {
                 let response = match msg.request {
                     Some(processing_request::Request::RequestHeaders(ref headers)) => {
                         extract_headers(headers, &mut inference_request.inner);
-                        debug!(path = ?inference_request.headers.get(":path"), "Received request headers");
 
                         if headers.end_of_stream {
                             run_request_plugins_and_respond(
@@ -82,8 +81,6 @@ impl ExternalProcessor for ExtProcServer {
                                 serde_json::from_slice::<serde_json::Value>(&request_body_buf)
                             {
                                 inference_request.inner.body = parsed;
-                            } else {
-                                warn!("Failed to parse request body as JSON");
                             }
                             run_request_plugins_and_respond(
                                 &req_plugins,
@@ -96,7 +93,6 @@ impl ExternalProcessor for ExtProcServer {
                     }
                     Some(processing_request::Request::ResponseHeaders(ref headers)) => {
                         extract_headers(headers, &mut inference_response.inner);
-                        debug!("Received response headers");
 
                         if headers.end_of_stream {
                             run_response_plugins_and_respond(
@@ -117,14 +113,10 @@ impl ExternalProcessor for ExtProcServer {
                         response_body_buf.extend_from_slice(&body.body);
 
                         if body.end_of_stream {
-                            match serde_json::from_slice::<serde_json::Value>(&response_body_buf) {
-                                Ok(parsed) => {
-                                    warn!(body_size = response_body_buf.len(), "Parsed response body");
-                                    inference_response.inner.body = parsed;
-                                }
-                                Err(e) => {
-                                    warn!(error = %e, body = %String::from_utf8_lossy(&response_body_buf), "Failed to parse response body as JSON");
-                                }
+                            if let Ok(parsed) =
+                                serde_json::from_slice::<serde_json::Value>(&response_body_buf)
+                            {
+                                inference_response.inner.body = parsed;
                             }
                             run_response_plugins_and_respond(
                                 &resp_plugins,
@@ -156,12 +148,15 @@ impl ExternalProcessor for ExtProcServer {
     }
 }
 
+#[inline]
 fn extract_headers(headers: &HttpHeaders, msg: &mut InferenceMessage) {
     if let Some(ref header_map) = headers.headers {
+        msg.headers.reserve(header_map.headers.len());
         for hv in &header_map.headers {
             if !hv.key.is_empty() {
                 let value = if !hv.raw_value.is_empty() {
-                    String::from_utf8_lossy(&hv.raw_value).to_string()
+                    // Headers are always valid UTF-8
+                    unsafe { String::from_utf8_unchecked(hv.raw_value.clone()) }
                 } else {
                     hv.value.clone()
                 };
@@ -171,52 +166,40 @@ fn extract_headers(headers: &HttpHeaders, msg: &mut InferenceMessage) {
     }
 }
 
-fn build_header_mutation(msg: &impl HasMutations) -> Option<HeaderMutation> {
-    let mutated = msg.mutated_headers();
-    let removed = msg.removed_headers();
-    if mutated.is_empty() && removed.is_empty() {
-        return None;
-    }
+#[inline]
+fn build_mutations(msg: &InferenceMessage) -> (Option<HeaderMutation>, Option<BodyMutation>) {
+    let mutated_headers = msg.mutated_headers();
+    let removed_headers = msg.removed_headers();
 
-    Some(HeaderMutation {
-        set_headers: mutated
-            .iter()
-            .map(|(k, v)| HeaderValueOption {
-                header: Some(HeaderValue {
-                    key: k.clone(),
-                    raw_value: v.as_bytes().to_vec(),
+    let header_mutation = if mutated_headers.is_empty() && removed_headers.is_empty() {
+        None
+    } else {
+        Some(HeaderMutation {
+            set_headers: mutated_headers
+                .iter()
+                .map(|(k, v)| HeaderValueOption {
+                    header: Some(HeaderValue {
+                        key: k.clone(),
+                        raw_value: v.as_bytes().to_vec(),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            })
-            .collect(),
-        remove_headers: removed,
-        ..Default::default()
-    })
-}
+                })
+                .collect(),
+            remove_headers: removed_headers,
+            ..Default::default()
+        })
+    };
 
-fn build_body_mutation(msg: &InferenceMessage) -> Option<BodyMutation> {
-    if !msg.body_mutated() {
-        return None;
-    }
-    let body_bytes = serde_json::to_vec(&msg.body).ok()?;
-    Some(BodyMutation {
-        mutation: Some(body_mutation::Mutation::Body(body_bytes)),
-    })
-}
+    let body_mutation = if !msg.body_mutated() {
+        None
+    } else {
+        serde_json::to_vec(&msg.body).ok().map(|bytes| BodyMutation {
+            mutation: Some(body_mutation::Mutation::Body(bytes)),
+        })
+    };
 
-trait HasMutations {
-    fn mutated_headers(&self) -> &std::collections::HashMap<String, String>;
-    fn removed_headers(&self) -> Vec<String>;
-}
-
-impl HasMutations for InferenceMessage {
-    fn mutated_headers(&self) -> &std::collections::HashMap<String, String> {
-        self.mutated_headers()
-    }
-    fn removed_headers(&self) -> Vec<String> {
-        self.removed_headers()
-    }
+    (header_mutation, body_mutation)
 }
 
 fn run_request_plugins_and_respond(
@@ -226,27 +209,59 @@ fn run_request_plugins_and_respond(
 ) -> Result<ProcessingResponse, Status> {
     for plugin in plugins {
         if let Err(e) = plugin.process_request(cycle_state, request) {
-            warn!(plugin = plugin.name(), error = %e, "Request plugin failed");
+            error!(plugin = plugin.name(), error = %e, "Request plugin failed");
             return Err(Status::internal(e.to_string()));
         }
     }
-    // When body is mutated, update content-length to match new body size.
-    // This is required by Envoy — mismatched content-length causes stream reset.
+
+    // Serialize body once, use for both content-length and body mutation
     if request.body_mutated() {
         if let Ok(body_bytes) = serde_json::to_vec(&request.body) {
             request.set_header("content-length", body_bytes.len().to_string());
+            // Store pre-serialized body to avoid double serialization
+            let common = CommonResponse {
+                header_mutation: {
+                    let mutated = request.mutated_headers();
+                    let removed = request.removed_headers();
+                    if mutated.is_empty() && removed.is_empty() {
+                        None
+                    } else {
+                        Some(HeaderMutation {
+                            set_headers: mutated.iter().map(|(k, v)| HeaderValueOption {
+                                header: Some(HeaderValue {
+                                    key: k.clone(),
+                                    raw_value: v.as_bytes().to_vec(),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }).collect(),
+                            remove_headers: removed,
+                            ..Default::default()
+                        })
+                    }
+                },
+                body_mutation: Some(BodyMutation {
+                    mutation: Some(body_mutation::Mutation::Body(body_bytes)),
+                }),
+                ..Default::default()
+            };
+            return Ok(ProcessingResponse {
+                response: Some(Response::RequestBody(BodyResponse {
+                    response: Some(common),
+                })),
+                ..Default::default()
+            });
         }
     }
 
-    let common = CommonResponse {
-        header_mutation: build_header_mutation(&request.inner),
-        body_mutation: build_body_mutation(&request.inner),
-        ..Default::default()
-    };
-
+    let (header_mutation, body_mutation) = build_mutations(&request.inner);
     Ok(ProcessingResponse {
         response: Some(Response::RequestBody(BodyResponse {
-            response: Some(common),
+            response: Some(CommonResponse {
+                header_mutation,
+                body_mutation,
+                ..Default::default()
+            }),
         })),
         ..Default::default()
     })
@@ -259,25 +274,57 @@ fn run_response_plugins_and_respond(
 ) -> Result<ProcessingResponse, Status> {
     for plugin in plugins {
         if let Err(e) = plugin.process_response(cycle_state, response) {
-            warn!(plugin = plugin.name(), error = %e, "Response plugin failed");
+            error!(plugin = plugin.name(), error = %e, "Response plugin failed");
             return Err(Status::internal(e.to_string()));
         }
     }
+
     if response.body_mutated() {
         if let Ok(body_bytes) = serde_json::to_vec(&response.body) {
             response.set_header("content-length", body_bytes.len().to_string());
+            let common = CommonResponse {
+                header_mutation: {
+                    let mutated = response.mutated_headers();
+                    let removed = response.removed_headers();
+                    if mutated.is_empty() && removed.is_empty() {
+                        None
+                    } else {
+                        Some(HeaderMutation {
+                            set_headers: mutated.iter().map(|(k, v)| HeaderValueOption {
+                                header: Some(HeaderValue {
+                                    key: k.clone(),
+                                    raw_value: v.as_bytes().to_vec(),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }).collect(),
+                            remove_headers: removed,
+                            ..Default::default()
+                        })
+                    }
+                },
+                body_mutation: Some(BodyMutation {
+                    mutation: Some(body_mutation::Mutation::Body(body_bytes)),
+                }),
+                ..Default::default()
+            };
+            return Ok(ProcessingResponse {
+                response: Some(Response::ResponseBody(BodyResponse {
+                    response: Some(common),
+                })),
+                ..Default::default()
+            });
         }
     }
 
-    let common = CommonResponse {
-        header_mutation: build_header_mutation(&response.inner),
-        body_mutation: build_body_mutation(&response.inner),
-        ..Default::default()
-    };
-
+    let (header_mutation, body_mutation) = build_mutations(&response.inner);
     Ok(ProcessingResponse {
         response: Some(Response::ResponseBody(BodyResponse {
-            response: Some(common),
+            response: Some(CommonResponse {
+                header_mutation,
+                body_mutation,
+                ..Default::default()
+            }),
         })),
         ..Default::default()
     })
