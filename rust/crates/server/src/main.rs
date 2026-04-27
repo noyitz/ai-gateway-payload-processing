@@ -31,7 +31,7 @@ struct Cli {
 }
 
 #[cfg(feature = "go-plugins")]
-fn build_plugins(
+async fn build_plugins(
     cli: &Cli,
 ) -> Result<(Vec<Box<dyn RequestProcessor>>, Vec<Box<dyn ResponseProcessor>>)> {
     use ipp_framework::cycle_state::CycleState;
@@ -82,7 +82,7 @@ fn build_plugins(
 }
 
 #[cfg(not(feature = "go-plugins"))]
-fn build_plugins(
+async fn build_plugins(
     cli: &Cli,
 ) -> Result<(Vec<Box<dyn RequestProcessor>>, Vec<Box<dyn ResponseProcessor>>)> {
     use ipp_k8s_plugins::apikey_injection::secret_store::SecretStore;
@@ -132,9 +132,8 @@ fn build_plugins(
 
     let response_plugins: Vec<Box<dyn ResponseProcessor>> = vec![Box::new(api_translation_resp)];
 
-    // Start kube-rs reconcilers
-    let kube_client = tokio::runtime::Handle::current()
-        .block_on(async { kube::Client::try_default().await.ok() });
+    // Start kube-rs reconcilers — kube::Client::try_default is called from main() which is async
+    let kube_client = kube::Client::try_default().await.ok();
 
     if let Some(client) = kube_client {
         let ms = model_store.clone();
@@ -167,7 +166,7 @@ async fn main() -> Result<()> {
 
     info!("Starting IPP Rust ext_proc server");
 
-    let (request_plugins, response_plugins) = build_plugins(&cli)?;
+    let (request_plugins, response_plugins) = build_plugins(&cli).await?;
 
     let ext_proc = ExtProcServer::new(request_plugins, response_plugins);
     let addr: SocketAddr = format!("0.0.0.0:{}", cli.grpc_port).parse()?;
