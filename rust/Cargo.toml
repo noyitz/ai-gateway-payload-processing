@@ -7,6 +7,7 @@ members = [
     "crates/k8s-plugins",
     "crates/server",
     "crates/ffi",
+    "crates/go-ffi",
 ]
 
 [workspace.package]

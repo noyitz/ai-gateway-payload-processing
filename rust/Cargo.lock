@@ -1116,6 +1116,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipp-go-ffi"
+version = "0.1.0"
+dependencies = [
+ "ipp-framework",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "ipp-k8s-plugins"
 version = "0.1.0"
 dependencies = [
@@ -1141,6 +1151,7 @@ dependencies = [
  "clap",
  "ext-proc-proto",
  "ipp-framework",
+ "ipp-go-ffi",
  "ipp-k8s-plugins",
  "ipp-translators",
  "k8s-openapi",
