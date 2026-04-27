@@ -1,0 +1,57 @@
+# Config D: Rust tonic server + Go plugins via FFI
+#
+# Stage 1: Build Go c-shared library
+# Stage 2: Build Rust binary linked against Go library
+# Stage 3: Runtime
+
+# --- Stage 1: Go c-shared library ---
+FROM golang:1.25 AS go-builder
+
+WORKDIR /build
+
+COPY go.mod go.sum ./
+COPY pkg/ ./pkg/
+COPY cmd/ ./cmd/
+COPY go-plugins-ffi/ ./go-plugins-ffi/
+
+WORKDIR /build/go-plugins-ffi
+RUN CGO_ENABLED=1 go build -buildmode=c-shared -o /usr/local/lib/libgo_plugins_ffi.so .
+
+# --- Stage 2: Rust binary ---
+FROM rust:latest AS rust-builder
+
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY --from=go-builder /usr/local/lib/libgo_plugins_ffi.so /usr/local/lib/
+COPY --from=go-builder /build/go-plugins-ffi/libgo_plugins_ffi.h /usr/local/include/
+
+COPY rust/Cargo.toml rust/Cargo.lock* ./
+COPY rust/crates/ ./crates/
+COPY rust/proto/ ./proto/
+
+ENV GO_PLUGINS_LIB_DIR=/usr/local/lib
+RUN cargo build --release -p ipp-server --features go-plugins \
+    && strip target/release/ipp-server
+
+# --- Stage 3: Runtime ---
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3t64 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=go-builder /usr/local/lib/libgo_plugins_ffi.so /usr/local/lib/
+COPY --from=rust-builder /build/target/release/ipp-server /ipp-server
+
+RUN ldconfig && useradd -r -u 1001 ipp
+USER 1001:1001
+
+EXPOSE 9004 9005
+
+ENTRYPOINT ["/ipp-server"]
