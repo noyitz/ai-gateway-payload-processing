@@ -138,24 +138,6 @@ Network latency comparison:
 
 ## Results
 
-### High Concurrency: 5000 requests, 100 concurrent connections
-
-| Config | Server | Plugins | Req/s | p50 | p95 | p99 |
-|--------|--------|---------|-------|-----|-----|-----|
-| **A** | Go | Go | 382 | 245ms | 354ms | 642ms |
-| **B** | Go | Rust (FFI) | 378 | 251ms | 329ms | 647ms |
-| **C** | Rust | Rust | 184 | 243ms | 328ms | 536ms |
-| **D** | Rust | Go (FFI) | **385** | **245ms** | 337ms | **517ms** |
-
-### Low Concurrency: 5000 requests, 10 concurrent connections
-
-| Config | Server | Plugins | Req/s | p50 | p95 | p99 |
-|--------|--------|---------|-------|-----|-----|-----|
-| **A** | Go | Go | 89 | 103ms | 173ms | 206ms |
-| **B** | Go | Rust (FFI) | 83 | 103ms | 189ms | 414ms |
-| **C** | Rust | Rust | 85 | 99ms | 173ms | 407ms |
-| **D** | Rust | Go (FFI) | **90** | **101ms** | **161ms** | **205ms** |
-
 ### Constant Rate Test: 100 req/s sustained for 60 seconds (wrk2)
 
 Measured with `wrk2` (by Gil Tene), which corrects for **coordinated omission** — it maintains a constant request rate regardless of server response time. This means GC pauses in Go and I/O stalls in Rust are accurately reflected in the latency percentiles, unlike regular load testers that slow down when the server is slow.
