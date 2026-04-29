@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use ext_proc_proto::envoy::config::core::v3::{HeaderValue, HeaderValueOption};
 use ext_proc_proto::envoy::service::ext_proc::v3::processing_response::Response;
@@ -13,7 +14,9 @@ use ipp_framework::plugin::{RequestProcessor, ResponseProcessor};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Status, Streaming};
-use tracing::error;
+use tracing::{error, warn};
+
+const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct ExtProcServer {
     request_plugins: Arc<Vec<Box<dyn RequestProcessor>>>,
@@ -53,7 +56,19 @@ impl ExternalProcessor for ExtProcServer {
             let mut request_body_buf: Vec<u8> = Vec::new();
             let mut response_body_buf: Vec<u8> = Vec::new();
 
-            while let Ok(Some(msg)) = stream.message().await {
+            loop {
+                let msg = match tokio::time::timeout(STREAM_TIMEOUT, stream.message()).await {
+                    Ok(Ok(Some(msg))) => msg,
+                    Ok(Ok(None)) => break, // stream closed
+                    Ok(Err(e)) => {
+                        error!(error = %e, "gRPC stream error");
+                        break;
+                    }
+                    Err(_) => {
+                        warn!("Stream timeout after {}s", STREAM_TIMEOUT.as_secs());
+                        break;
+                    }
+                };
                 let response = match msg.request {
                     Some(processing_request::Request::RequestHeaders(ref headers)) => {
                         extract_headers(headers, &mut inference_request.inner);
@@ -77,10 +92,9 @@ impl ExternalProcessor for ExtProcServer {
                         request_body_buf.extend_from_slice(&body.body);
 
                         if body.end_of_stream {
-                            if let Ok(parsed) =
-                                serde_json::from_slice::<serde_json::Value>(&request_body_buf)
-                            {
-                                inference_request.inner.body = parsed;
+                            match serde_json::from_slice::<serde_json::Value>(&request_body_buf) {
+                                Ok(parsed) => inference_request.inner.body = parsed,
+                                Err(e) => warn!(error = %e, size = request_body_buf.len(), "Failed to parse request body as JSON"),
                             }
                             run_request_plugins_and_respond(
                                 &req_plugins,
@@ -113,10 +127,9 @@ impl ExternalProcessor for ExtProcServer {
                         response_body_buf.extend_from_slice(&body.body);
 
                         if body.end_of_stream {
-                            if let Ok(parsed) =
-                                serde_json::from_slice::<serde_json::Value>(&response_body_buf)
-                            {
-                                inference_response.inner.body = parsed;
+                            match serde_json::from_slice::<serde_json::Value>(&response_body_buf) {
+                                Ok(parsed) => inference_response.inner.body = parsed,
+                                Err(e) => warn!(error = %e, size = response_body_buf.len(), "Failed to parse response body as JSON"),
                             }
                             run_response_plugins_and_respond(
                                 &resp_plugins,
@@ -155,8 +168,7 @@ fn extract_headers(headers: &HttpHeaders, msg: &mut InferenceMessage) {
         for hv in &header_map.headers {
             if !hv.key.is_empty() {
                 let value = if !hv.raw_value.is_empty() {
-                    // Headers are always valid UTF-8
-                    unsafe { String::from_utf8_unchecked(hv.raw_value.clone()) }
+                    String::from_utf8_lossy(&hv.raw_value).into_owned()
                 } else {
                     hv.value.clone()
                 };

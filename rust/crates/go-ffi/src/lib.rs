@@ -67,7 +67,8 @@ impl RequestProcessor for GoPluginBridge {
         let body_bytes = serde_json::to_vec(&request.body)
             .map_err(|e| PluginError::internal(format!("failed to marshal body: {e}")))?;
 
-        let c_headers = CString::new(headers_json).unwrap();
+        let c_headers = CString::new(headers_json)
+            .map_err(|e| PluginError::internal(format!("headers contain null byte: {e}")))?;
 
         let result = unsafe {
             bindings::go_plugin_process_request(
@@ -82,10 +83,12 @@ impl RequestProcessor for GoPluginBridge {
             return Err(PluginError::internal("go_plugin_process_request returned null"));
         }
 
+        // Read cycle_state_id before processing result (in case result has an error)
+        let cs_id = unsafe { (*result).cycle_state_id };
+
         let outcome = unsafe { apply_result(result, request) };
 
         // Store cycle_state_id for response phase
-        let cs_id = unsafe { (*result).cycle_state_id };
         cycle_state.write(GO_CYCLE_STATE_ID_KEY, cs_id);
 
         unsafe { bindings::go_plugin_free_result(result) };
@@ -114,7 +117,8 @@ impl ResponseProcessor for GoPluginBridge {
         let body_bytes = serde_json::to_vec(&response.body)
             .map_err(|e| PluginError::internal(format!("failed to marshal body: {e}")))?;
 
-        let c_headers = CString::new(headers_json).unwrap();
+        let c_headers = CString::new(headers_json)
+            .map_err(|e| PluginError::internal(format!("headers contain null byte: {e}")))?;
 
         let result = unsafe {
             bindings::go_plugin_process_response(
