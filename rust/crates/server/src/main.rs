@@ -1,4 +1,6 @@
 pub mod ext_proc_handler;
+mod health;
+mod metrics;
 
 use std::net::SocketAddr;
 
@@ -7,7 +9,7 @@ use clap::Parser;
 use ext_proc_proto::envoy::service::ext_proc::v3::external_processor_server::ExternalProcessorServer;
 use ipp_framework::plugin::{RequestProcessor, ResponseProcessor};
 use tonic::transport::Server;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use ext_proc_handler::ExtProcServer;
 
@@ -168,15 +170,47 @@ async fn main() -> Result<()> {
 
     let (request_plugins, response_plugins) = build_plugins(&cli).await?;
 
+    // Start health check server
+    let health_port = cli.health_port;
+    tokio::spawn(async move {
+        if let Err(e) = health::serve_health(health_port).await {
+            error!(error = %e, "Health server failed");
+        }
+    });
+
+    // Start metrics server
+    let metrics_instance = metrics::Metrics::new();
+    let metrics_port = 9090u16;
+    let metrics_clone = metrics_instance.clone();
+    tokio::spawn(async move {
+        if let Err(e) = metrics::serve_metrics(metrics_port, metrics_clone).await {
+            error!(error = %e, "Metrics server failed");
+        }
+    });
+
+    // Start ext_proc gRPC server with graceful shutdown
     let ext_proc = ExtProcServer::new(request_plugins, response_plugins);
     let addr: SocketAddr = format!("0.0.0.0:{}", cli.grpc_port).parse()?;
 
-    info!(port = cli.grpc_port, "Starting gRPC ext_proc server");
+    info!(
+        grpc_port = cli.grpc_port,
+        health_port = cli.health_port,
+        metrics_port = 9090,
+        "Starting gRPC ext_proc server"
+    );
+
+    let shutdown = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install CTRL+C handler");
+        info!("Received shutdown signal, draining connections...");
+    };
 
     Server::builder()
         .add_service(ExternalProcessorServer::new(ext_proc))
-        .serve(addr)
+        .serve_with_shutdown(addr, shutdown)
         .await?;
 
+    info!("Server shutdown complete");
     Ok(())
 }
