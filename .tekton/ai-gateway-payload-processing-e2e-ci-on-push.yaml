@@ -28,7 +28,7 @@ spec:
   - name: output-image
     value: quay.io/opendatahub/ai-gateway-payload-processing-e2e:odh-stable
   - name: dockerfile
-    value: Dockerfile.konflux.e2e
+    value: Dockerfile.e2e
   - name: path-context
     value: .
   - name: pipeline-type
