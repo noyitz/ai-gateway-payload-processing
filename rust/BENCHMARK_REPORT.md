@@ -4,12 +4,14 @@
 
 | Metric | Full Go (Config A) | Full Rust (Config C) | Difference |
 |--------|-------------------|---------------------|------------|
-| p50 latency | 8.95ms | **7.38ms** | **Rust 18% faster** |
-| p99 latency | 19.39ms | **16.40ms** | **Rust 15% faster** |
-| CPU under load | 54 millicores | **23 millicores** | **Rust 57% less CPU** |
-| Memory | 45 Mi | **1 Mi** | **Rust 45x less memory** |
+| p50 latency | 9.55ms | **8.68ms** | **Rust 9% faster** |
+| p90 latency | 13.18ms | **10.77ms** | **Rust 18% faster** |
+| p99 latency | 19.71ms | **18.66ms** | **Rust 5% faster** |
+| p99.9 latency | 45.89ms | **37.79ms** | **Rust 18% faster** |
+| CPU under load | 65 millicores | **20 millicores** | **Rust 69% less CPU** |
+| Memory | 52 Mi | **1 Mi** | **Rust 52x less memory** |
 
-Rust is faster at every latency percentile, uses less than half the CPU, and 45x less memory — for the same 100 req/s Anthropic translation workload (the heaviest provider).
+Rust is faster at every latency percentile, uses 69% less CPU, and 52x less memory — for the same 100 req/s Anthropic translation workload (the heaviest provider).
 
 Measured with `wrk2` (corrects for coordinated omission) from an EC2 instance in the same AWS region (us-east-2) as the cluster, eliminating network noise. All logging and tracing disabled on all configs for apples-to-apples comparison. CPU/memory captured via `kubectl top pods` during sustained 60-second load.
 
@@ -146,10 +148,8 @@ Latency uses HdrHistogram (High Dynamic Range Histogram) for accurate percentile
 
 | Config | Server | Plugins | p50 | p75 | p90 | p99 | p99.9 | CPU | Memory |
 |--------|--------|---------|-----|-----|-----|-----|-------|-----|--------|
-| A | Go | Go | 8.95ms | 9.77ms | 10.77ms | 19.39ms | 39.52ms | 54m | 45Mi |
-| B | Go | Rust (FFI) | 9.27ms | 10.20ms | 11.68ms | 17.50ms | 44.35ms | 54m | 30Mi |
-| **C** | **Rust** | **Rust** | **7.38ms** | **8.48ms** | **9.87ms** | **16.40ms** | **36.80ms** | **23m** | **1Mi** |
-| D | Rust | Go (FFI) | 8.94ms | 9.70ms | 10.64ms | 15.14ms | 37.76ms | 79m | 61Mi |
+| A | Go | Go | 9.55ms | 10.69ms | 13.18ms | 19.71ms | 45.89ms | 65m | 52Mi |
+| **C** | **Rust** | **Rust** | **8.68ms** | **9.57ms** | **10.77ms** | **18.66ms** | **37.79ms** | **20m** | **1Mi** |
 
 All configs: 6002 requests in 60 seconds, 100% success rate, 0 errors.
 All logging and tracing disabled on all configs for fair comparison.
