@@ -441,3 +441,83 @@ fn anthropic_multi_turn_conversation() {
     let msgs = req.body["messages"].as_array().unwrap();
     assert_eq!(msgs.len(), 3); // user, assistant, user (system extracted)
 }
+
+/// Large payload (100KB+ prompt)
+#[test]
+fn large_payload_through_plugin_chain() {
+    let plugin = make_plugin();
+    let large_content = "x".repeat(100_000);
+
+    let mut cs = CycleState::new();
+    cs.write(state_keys::PROVIDER, "openai".to_string());
+    cs.write(state_keys::MODEL, "gpt-4o".to_string());
+
+    let mut req = InferenceRequest::new();
+    req.set_body(json!({
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": large_content}]
+    }));
+
+    plugin.process_request(&mut cs, &mut req).unwrap();
+    assert!(req.headers.contains_key(":path"));
+}
+
+/// Unsupported provider returns error
+#[test]
+fn unsupported_provider_returns_error() {
+    let plugin = make_plugin();
+    let mut cs = CycleState::new();
+    cs.write(state_keys::PROVIDER, "unknown-provider".to_string());
+
+    let mut req = InferenceRequest::new();
+    req.set_body(json!({"model": "test", "messages": [{"role": "user", "content": "hi"}]}));
+
+    let err = plugin.process_request(&mut cs, &mut req).unwrap_err();
+    assert_eq!(err.http_status_code(), 400);
+}
+
+/// Multiple system messages concatenated for Anthropic
+#[test]
+fn anthropic_multiple_system_messages() {
+    let plugin = make_plugin();
+    let mut cs = CycleState::new();
+    cs.write(state_keys::PROVIDER, "anthropic".to_string());
+
+    let mut req = InferenceRequest::new();
+    req.set_body(json!({
+        "model": "claude",
+        "messages": [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "system", "content": "Be concise."},
+            {"role": "user", "content": "Hi"}
+        ]
+    }));
+
+    plugin.process_request(&mut cs, &mut req).unwrap();
+    assert_eq!(req.body["system"], "You are helpful.\nBe concise.");
+}
+
+/// Azure response stripping verified in full chain
+#[test]
+fn azure_full_roundtrip_strips_filters() {
+    let plugin = make_plugin();
+    let mut cs = CycleState::new();
+    cs.write(state_keys::PROVIDER, "azure-openai".to_string());
+    cs.write(state_keys::MODEL, "gpt-4o".to_string());
+
+    let mut req = InferenceRequest::new();
+    req.set_body(json!({"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}]}));
+    plugin.process_request(&mut cs, &mut req).unwrap();
+
+    let mut resp = InferenceResponse::new();
+    resp.inner.body = json!({
+        "id": "chatcmpl-1",
+        "choices": [{"index": 0, "content_filter_results": {"hate": "safe"}, "message": {"content": "Hi"}}],
+        "prompt_filter_results": [{"index": 0}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+    });
+
+    plugin.process_response(&mut cs, &mut resp).unwrap();
+    assert!(resp.body.get("prompt_filter_results").is_none());
+    assert!(resp.body["choices"][0].get("content_filter_results").is_none());
+}
