@@ -13,22 +13,23 @@ const EXTERNAL_MODEL_KIND: &str = "ExternalModel";
 const EXTERNAL_MODEL_PLURAL: &str = "externalmodels";
 
 pub async fn run_external_model_watcher(client: Client, store: ModelInfoStore) {
-    let ar = kube::discovery::ApiResource {
-        group: EXTERNAL_MODEL_GROUP.to_string(),
-        version: EXTERNAL_MODEL_VERSION.to_string(),
-        api_version: format!("{}/{}", EXTERNAL_MODEL_GROUP, EXTERNAL_MODEL_VERSION),
-        kind: EXTERNAL_MODEL_KIND.to_string(),
-        plural: EXTERNAL_MODEL_PLURAL.to_string(),
-    };
-
-    let api: Api<DynamicObject> = Api::all_with(client, &ar);
-
-    info!("Starting ExternalModel watcher for {}/{}", EXTERNAL_MODEL_GROUP, EXTERNAL_MODEL_KIND);
-
-    let mut stream = watcher::watcher(api, watcher::Config::default()).applied_objects().boxed();
-
     loop {
-        match stream.next().await {
+        let ar = kube::discovery::ApiResource {
+            group: EXTERNAL_MODEL_GROUP.to_string(),
+            version: EXTERNAL_MODEL_VERSION.to_string(),
+            api_version: format!("{}/{}", EXTERNAL_MODEL_GROUP, EXTERNAL_MODEL_VERSION),
+            kind: EXTERNAL_MODEL_KIND.to_string(),
+            plural: EXTERNAL_MODEL_PLURAL.to_string(),
+        };
+
+        let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+
+        info!("Starting ExternalModel watcher for {}/{}", EXTERNAL_MODEL_GROUP, EXTERNAL_MODEL_KIND);
+
+        let mut stream = watcher::watcher(api, watcher::Config::default()).applied_objects().boxed();
+
+        loop {
+            match stream.next().await {
             Some(Ok(obj)) => {
                 let name = obj.metadata.name.clone().unwrap_or_default();
                 let namespace = obj.metadata.namespace.clone().unwrap_or_default();
@@ -82,9 +83,11 @@ pub async fn run_external_model_watcher(client: Client, store: ModelInfoStore) {
                 warn!(error = %e, "ExternalModel watcher error");
             }
             None => {
-                warn!("ExternalModel watcher stream ended, restarting...");
+                warn!("ExternalModel watcher stream ended, reconnecting in 5s...");
                 break;
             }
         }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
 }
