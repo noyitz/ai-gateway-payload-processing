@@ -6,10 +6,10 @@ Hey Dude. Noy set up the Rust IPP codebase and it's split across two repos, two 
 
 ## The Two Branches, Man
 
-### Branch 1: The Framework (upstream — the rug that ties the room together)
+### Repo 1: The Framework (upstream — the rug that ties the room together)
 
-**Repo**: `noyitz/gateway-api-inference-extension`
-**Branch**: `feature/rust-full-stack`
+**Repo**: [`llm-d-incubation/inference-payload-processor-rs`](https://github.com/llm-d-incubation/inference-payload-processor-rs)
+**PR**: [#5](https://github.com/llm-d-incubation/inference-payload-processor-rs/pull/5) (pending merge to main)
 
 ```
 rust/
@@ -41,10 +41,10 @@ rust/
 
 This is the generic stuff — framework, server, plugins that any inference gateway could use. No MaaS-specific code here. 96 tests passing.
 
-### Branch 2: The Product (downstream — that's where your PRs go, Dude)
+### Repo 2: The Product (downstream — that's where your PRs go, Dude)
 
-**Repo**: `noyitz/ai-gateway-payload-processing`
-**Branch**: `feature/rust-plugins`
+**Repo**: [`opendatahub-io/ai-gateway-payload-processing`](https://github.com/opendatahub-io/ai-gateway-payload-processing)
+**Branch**: `feat/rust-downstream-plugins`
 
 The clean downstream structure is in `rust-downstream/`:
 
@@ -71,14 +71,14 @@ The old `rust/` directory is also there with the full monolithic codebase from t
 *"Obviously you're not a golfer."*
 
 ```
-Upstream (gateway-api-inference-extension)
+Upstream (llm-d-incubation/inference-payload-processor-rs)
   ├── framework          (defines plugin traits)
   ├── plugins            (generic plugins: translation, auth)
   └── server             (tonic ext_proc server)
         ↑
         │ git dependency
         │
-Downstream (ai-gateway-payload-processing)
+Downstream (opendatahub-io/ai-gateway-payload-processing)
   ├── model-provider-resolver  (product-specific: ExternalModel CRD)
   └── cmd/main.rs              (wires everything together, starts server)
 ```
@@ -215,14 +215,13 @@ Don't touch `ext_proc_handler.rs`, `metrics.rs`, `health.rs`, or `reconciler.rs`
 
 ## Quick Reference
 
-| What | Where | Branch |
-|------|-------|--------|
-| Plugin traits | `gateway-api-inference-extension/rust/crates/framework/` | `feature/rust-full-stack` |
-| Generic plugins | `gateway-api-inference-extension/rust/crates/plugins/` | `feature/rust-full-stack` |
-| ext_proc server | `gateway-api-inference-extension/rust/crates/server/` | `feature/rust-full-stack` |
-| Model resolver | `ai-gateway-payload-processing/rust-downstream/crates/model-provider-resolver/` | `feature/rust-plugins` |
-| Binary entrypoint | `ai-gateway-payload-processing/rust-downstream/cmd/` | `feature/rust-plugins` |
-| Old monolithic POC | `ai-gateway-payload-processing/rust/` | `feature/rust-plugins` |
-| Benchmark report | `ai-gateway-payload-processing/rust/BENCHMARK_REPORT.md` | `feature/rust-plugins` |
+| What | Where | Repo |
+|------|-------|------|
+| Plugin traits | `crates/framework/` | `llm-d-incubation/inference-payload-processor-rs` |
+| Generic plugins | `crates/plugins/` | `llm-d-incubation/inference-payload-processor-rs` |
+| ext_proc server | `crates/server/` | `llm-d-incubation/inference-payload-processor-rs` |
+| Model resolver | `rust-downstream/crates/model-provider-resolver/` | `opendatahub-io/ai-gateway-payload-processing` |
+| Binary entrypoint | `rust-downstream/cmd/` | `opendatahub-io/ai-gateway-payload-processing` |
+| Benchmark report | `BENCHMARK.md` | `llm-d-incubation/inference-payload-processor-rs` |
 
 *"That's just like, your opinion, man. But the tests pass."*
