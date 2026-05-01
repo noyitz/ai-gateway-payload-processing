@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/model-provider-resolver",
+    "cmd",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# Upstream crates from inference-payload-processor-rs
+# TODO: Update URL to llm-d-incubation/inference-payload-processor-rs once PR #5 is merged to main
+ipp-framework = { git = "https://github.com/noyitz/inference-payload-processor-rs.git", branch = "feat/rust-ipp-framework", package = "ipp-framework" }
+ipp-plugins = { git = "https://github.com/noyitz/inference-payload-processor-rs.git", branch = "feat/rust-ipp-framework", package = "ipp-plugins" }
+ipp-server = { git = "https://github.com/noyitz/inference-payload-processor-rs.git", branch = "feat/rust-ipp-framework", package = "ipp-server" }
+ext-proc-proto = { git = "https://github.com/noyitz/inference-payload-processor-rs.git", branch = "feat/rust-ipp-framework", package = "ext-proc-proto" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
