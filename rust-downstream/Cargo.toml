@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/api-translation",
+    "crates/apikey-injection",
     "crates/model-provider-resolver",
     "cmd",
 ]
@@ -12,11 +14,9 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 # Upstream crates from inference-payload-processor-rs
-# TODO: Update URL to llm-d-incubation/inference-payload-processor-rs once PR #5 is merged to main
 ipp-framework = { git = "https://github.com/noyitz/inference-payload-processor-rs.git", branch = "feat/rust-ipp-framework", package = "ipp-framework" }
 ipp-plugins = { git = "https://github.com/noyitz/inference-payload-processor-rs.git", branch = "feat/rust-ipp-framework", package = "ipp-plugins" }
 ipp-server = { git = "https://github.com/noyitz/inference-payload-processor-rs.git", branch = "feat/rust-ipp-framework", package = "ipp-server" }
-ext-proc-proto = { git = "https://github.com/noyitz/inference-payload-processor-rs.git", branch = "feat/rust-ipp-framework", package = "ext-proc-proto" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -2,17 +2,18 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use clap::Parser;
-use ext_proc_proto::envoy::service::ext_proc::v3::external_processor_server::ExternalProcessorServer;
+use envoy_types::pb::envoy::service::ext_proc::v3::external_processor_server::ExternalProcessorServer;
+use ipp_api_translation::{ApiTranslationPlugin, VertexOpenAiConfig};
+use ipp_apikey_injection::secret_store::SecretStore;
+use ipp_apikey_injection::ApiKeyInjectionPlugin;
 use ipp_framework::plugin::{RequestProcessor, ResponseProcessor};
-use ipp_model_provider_resolver::ModelProviderResolverPlugin;
 use ipp_model_provider_resolver::model_store::ModelInfoStore;
-use ipp_plugins::api_translation::{ApiTranslationPlugin, VertexOpenAiConfig};
-use ipp_plugins::apikey_injection::secret_store::SecretStore;
-use ipp_plugins::apikey_injection::ApiKeyInjectionPlugin;
+use ipp_model_provider_resolver::ModelProviderResolverPlugin;
 use ipp_plugins::body_field_to_header::BodyFieldToHeaderPlugin;
 use ipp_server::ext_proc_handler::ExtProcServer;
+use ipp_server::metrics;
 use tonic::transport::Server;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -25,6 +26,9 @@ struct Cli {
 
     #[arg(long, default_value = "9005", help = "Health check port")]
     health_port: u16,
+
+    #[arg(long, default_value = "9090", help = "Prometheus metrics port")]
+    metrics_port: u16,
 
     #[arg(long, help = "Vertex OpenAI project")]
     vertex_project: Option<String>,
@@ -56,6 +60,7 @@ async fn main() -> Result<()> {
     // --- Upstream generic plugins ---
     let body_to_header = BodyFieldToHeaderPlugin::new("model", "X-Gateway-Model-Name")?;
 
+    // --- Downstream product-specific plugins ---
     let vertex_config = match (&cli.vertex_project, &cli.vertex_location, &cli.vertex_endpoint) {
         (Some(p), Some(l), Some(e)) => Some(VertexOpenAiConfig {
             project: p.clone(),
@@ -69,8 +74,6 @@ async fn main() -> Result<()> {
     };
     let api_translation = ApiTranslationPlugin::new(vertex_config.clone())?;
     let apikey_injection = ApiKeyInjectionPlugin::new(secret_store.clone());
-
-    // --- Downstream product-specific plugins ---
     let model_resolver = ModelProviderResolverPlugin::new(model_store.clone());
 
     // --- Plugin chain (order matters) ---
@@ -83,49 +86,77 @@ async fn main() -> Result<()> {
 
     let api_translation_resp = ApiTranslationPlugin::new(vertex_config)?;
     let response_plugins: Vec<Box<dyn ResponseProcessor>> = vec![
-        Box::new(api_translation_resp), // Translate response back to OpenAI format
+        Box::new(api_translation_resp),
     ];
 
     // --- Start K8s reconcilers ---
     let kube_client = kube::Client::try_default().await.ok();
     if let Some(client) = kube_client {
-        // Downstream: ExternalModel watcher
         let ms = model_store.clone();
         let c = client.clone();
         tokio::spawn(async move {
             ipp_model_provider_resolver::reconciler::run_external_model_watcher(c, ms).await;
         });
 
-        // Upstream: Secret watcher
         let ss = secret_store.clone();
         tokio::spawn(async move {
-            ipp_plugins::apikey_injection::reconciler::run_secret_watcher(client, ss).await;
+            ipp_apikey_injection::reconciler::run_secret_watcher(client, ss).await;
         });
 
         info!("Started ExternalModel and Secret reconcilers");
     }
 
-    // --- Start servers ---
-    let ext_proc = ExtProcServer::new(request_plugins, response_plugins);
+    // --- Metrics ---
+    let metrics_instance = metrics::Metrics::new()
+        .map_err(|e| anyhow::anyhow!("Failed to initialize metrics: {}", e))?;
+
+    let health_port = cli.health_port;
+    let health_handle = tokio::spawn(async move {
+        if let Err(e) = ipp_server::health::serve_health(health_port).await {
+            error!(error = %e, "Health server failed");
+        }
+    });
+
+    let metrics_port = cli.metrics_port;
+    let metrics_clone = metrics_instance.clone();
+    let metrics_handle = tokio::spawn(async move {
+        if let Err(e) = metrics::serve_metrics(metrics_port, metrics_clone).await {
+            error!(error = %e, "Metrics server failed");
+        }
+    });
+
+    // --- Start ext_proc server ---
+    let ext_proc = ExtProcServer::new(request_plugins, response_plugins, metrics_instance);
     let addr: SocketAddr = format!("0.0.0.0:{}", cli.grpc_port).parse()?;
 
     info!(
         grpc_port = cli.grpc_port,
         health_port = cli.health_port,
+        metrics_port = cli.metrics_port,
         "Starting gRPC ext_proc server"
     );
 
     let shutdown = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install CTRL+C handler");
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            error!(error = %e, "Failed to install signal handler");
+            return;
+        }
         info!("Received shutdown signal, draining connections...");
     };
 
-    Server::builder()
-        .add_service(ExternalProcessorServer::new(ext_proc))
-        .serve_with_shutdown(addr, shutdown)
-        .await?;
+    tokio::select! {
+        result = Server::builder()
+            .add_service(ExternalProcessorServer::new(ext_proc))
+            .serve_with_shutdown(addr, shutdown) => {
+            result?;
+        }
+        _ = health_handle => {
+            error!("Health server exited unexpectedly");
+        }
+        _ = metrics_handle => {
+            error!("Metrics server exited unexpectedly");
+        }
+    }
 
     info!("Server shutdown complete");
     Ok(())
