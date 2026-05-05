@@ -33,6 +33,8 @@ spec:
     value: .
   - name: pipeline-type
     value: pull-request
+  - name: enable-group-testing
+    value: "true"
   - name: additional-tags
     value:
     - 'odh-pr-{{revision}}'
