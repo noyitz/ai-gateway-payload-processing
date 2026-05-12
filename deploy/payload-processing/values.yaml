@@ -23,6 +23,16 @@ upstreamBbr:
         json:
           fieldName: model
           headerName: X-Gateway-Model-Name
+      # External metering plugin: Circuit Breaker (pre-request) + Token Usage (post-response)
+      # Uncomment and set meteringURL to enable
+      # - type: external-metering
+      #   name: metering-check
+      #   json:
+      #     meteringURL: "http://<metering-system>:8080"
+      #     timeoutSeconds: 5
+      #     featureKey: "inference-tokens"
+      #     source: "maas-gateway"
+      #     failOpen: true
       - type: model-provider-resolver
         name: model-provider-resolver
       - type: api-translation
