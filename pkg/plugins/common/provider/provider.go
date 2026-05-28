@@ -21,6 +21,5 @@ const (
 	Anthropic     = "anthropic"
 	AzureOpenAI   = "azure-openai"
 	VertexOpenAI  = "vertex-openai"
-	VertexOAuth   = "vertex-oauth"
 	BedrockOpenAI = "bedrock-openai"
 )
