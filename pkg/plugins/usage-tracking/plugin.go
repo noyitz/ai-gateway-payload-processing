@@ -92,13 +92,13 @@ func (p *UsageTrackingPlugin) WithName(name string) *UsageTrackingPlugin {
 	return p
 }
 
-// ProcessRequest captures the user identity from the X-MaaS-User header and stores it
-// in CycleState for use during response processing.
-func (p *UsageTrackingPlugin) ProcessRequest(ctx context.Context, cycleState *framework.CycleState, request *framework.InferenceRequest) error {
-	log.FromContext(ctx).V(logutil.VERBOSE).Info("usage-tracking request headers", "headers", request.Headers)
-	if user, ok := request.Headers["x-maas-user"]; ok && user != "" {
+// ProcessRequest captures the user identity from the X-MaaS-Username header and
+// strips accept-encoding to prevent compressed responses that can't be parsed.
+func (p *UsageTrackingPlugin) ProcessRequest(_ context.Context, cycleState *framework.CycleState, request *framework.InferenceRequest) error {
+	if user, ok := request.Headers["x-maas-username"]; ok && user != "" {
 		cycleState.Write(userKey, user)
 	}
+	request.RemoveHeader("accept-encoding")
 	return nil
 }
 
