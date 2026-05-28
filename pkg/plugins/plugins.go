@@ -19,6 +19,7 @@ package plugins
 import (
 	api_translation "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation"
 	apikey_injection "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/apikey-injection"
+	external_metering "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/external-metering"
 	provider_resolver "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/model-provider-resolver"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/nemo"
 	usage_tracking "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/usage-tracking"
@@ -32,4 +33,5 @@ func RegisterPlugins() {
 	framework.Register(nemo.NemoRequestGuardPluginType, nemo.NemoRequestGuardFactory)
 	framework.Register(nemo.NemoResponseGuardPluginType, nemo.NemoResponseGuardFactory)
 	framework.Register(usage_tracking.UsageTrackingPluginType, usage_tracking.UsageTrackingFactory)
+	framework.Register(external_metering.ExternalMeteringPluginType, external_metering.ExternalMeteringFactory)
 }

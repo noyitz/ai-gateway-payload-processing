@@ -22,4 +22,11 @@ const (
 	ModelKey          = "model"
 	CredsRefName      = "credential-ref-name"
 	CredsRefNamespace = "credential-ref-namespace"
+
+	// Metering CycleState keys
+	MeteringUsernameKey     = "metering-username"
+	MeteringGroupKey        = "metering-group"
+	MeteringSubscriptionKey = "metering-subscription"
+	MeteringModelKey        = "metering-model"
+	MeteringRequestTimeKey  = "metering-request-time"
 )
