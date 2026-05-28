@@ -92,11 +92,13 @@ func NewAPITranslationPlugin(ctx context.Context, config apiTranslationConfig) (
 		if config.VertexOpenAI.Project == "" || config.VertexOpenAI.Location == "" || config.VertexOpenAI.Endpoint == "" {
 			return nil, fmt.Errorf("vertexOpenAI config requires non-empty project, location, and endpoint")
 		}
-		providers[provider.VertexOpenAI] = vertex.NewVertexOpenAITranslator(
+		vertexTranslator := vertex.NewVertexOpenAITranslator(
 			config.VertexOpenAI.Project,
 			config.VertexOpenAI.Location,
 			config.VertexOpenAI.Endpoint,
 		)
+		providers[provider.VertexOpenAI] = vertexTranslator
+		providers[provider.VertexOAuth] = vertexTranslator
 	}
 
 	keys := make([]string, 0, len(providers))
