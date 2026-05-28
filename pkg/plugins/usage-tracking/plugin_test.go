@@ -31,6 +31,7 @@ func TestUsageTrackingPlugin_ProcessResponse(t *testing.T) {
 		name                string
 		provider            string
 		model               string
+		user                string
 		body                map[string]any
 		wantRequests        float64
 		wantPromptTokens    float64
@@ -45,6 +46,7 @@ func TestUsageTrackingPlugin_ProcessResponse(t *testing.T) {
 			name:     "full usage data",
 			provider: "openai",
 			model:    "gpt-4o",
+			user:     "noy",
 			body: map[string]any{
 				"usage": map[string]any{
 					"prompt_tokens":     float64(100),
@@ -79,13 +81,32 @@ func TestUsageTrackingPlugin_ProcessResponse(t *testing.T) {
 			wantPromptTokens:    10,
 			wantCompletionToken: 5,
 		},
+		{
+			name:     "anthropic format usage (input_tokens/output_tokens)",
+			provider: "anthropic",
+			model:    "claude-sonnet-4",
+			user:     "yossi",
+			body: map[string]any{
+				"usage": map[string]any{
+					"input_tokens":  float64(20),
+					"output_tokens": float64(8),
+				},
+			},
+			wantRequests:        1,
+			wantPromptTokens:    20,
+			wantCompletionToken: 8,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			requestsBefore := testutil.ToFloat64(requestsCounter.WithLabelValues(test.provider, effectiveModel(test.model)))
-			promptBefore := testutil.ToFloat64(promptTokensCounter.WithLabelValues(test.provider, effectiveModel(test.model)))
-			completionBefore := testutil.ToFloat64(completionTokensCounter.WithLabelValues(test.provider, effectiveModel(test.model)))
+			user := test.user
+			if user == "" {
+				user = "anonymous"
+			}
+			requestsBefore := testutil.ToFloat64(requestsCounter.WithLabelValues(test.provider, effectiveModel(test.model), user))
+			promptBefore := testutil.ToFloat64(promptTokensCounter.WithLabelValues(test.provider, effectiveModel(test.model), user))
+			completionBefore := testutil.ToFloat64(completionTokensCounter.WithLabelValues(test.provider, effectiveModel(test.model), user))
 
 			p := &UsageTrackingPlugin{}
 			cs := framework.NewCycleState()
@@ -94,6 +115,9 @@ func TestUsageTrackingPlugin_ProcessResponse(t *testing.T) {
 			}
 			if test.model != "" {
 				cs.Write(state.ModelKey, test.model)
+			}
+			if test.user != "" {
+				cs.Write(userKey, test.user)
 			}
 
 			resp := framework.NewInferenceResponse()
@@ -104,9 +128,9 @@ func TestUsageTrackingPlugin_ProcessResponse(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			gotRequests := testutil.ToFloat64(requestsCounter.WithLabelValues(test.provider, effectiveModel(test.model))) - requestsBefore
-			gotPrompt := testutil.ToFloat64(promptTokensCounter.WithLabelValues(test.provider, effectiveModel(test.model))) - promptBefore
-			gotCompletion := testutil.ToFloat64(completionTokensCounter.WithLabelValues(test.provider, effectiveModel(test.model))) - completionBefore
+			gotRequests := testutil.ToFloat64(requestsCounter.WithLabelValues(test.provider, effectiveModel(test.model), user)) - requestsBefore
+			gotPrompt := testutil.ToFloat64(promptTokensCounter.WithLabelValues(test.provider, effectiveModel(test.model), user)) - promptBefore
+			gotCompletion := testutil.ToFloat64(completionTokensCounter.WithLabelValues(test.provider, effectiveModel(test.model), user)) - completionBefore
 
 			if gotRequests != test.wantRequests {
 				t.Errorf("requests counter: got %v, want %v", gotRequests, test.wantRequests)

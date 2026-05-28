@@ -31,33 +31,35 @@ import (
 
 const (
 	UsageTrackingPluginType = "usage-tracking"
+	userKey                 = "usage-tracking-user"
 )
 
+var _ framework.RequestProcessor = &UsageTrackingPlugin{}
 var _ framework.ResponseProcessor = &UsageTrackingPlugin{}
 
 var (
 	promptTokensCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "ipp_usage_prompt_tokens_total",
-			Help: "Total prompt tokens consumed, by provider and model.",
+			Help: "Total prompt tokens consumed, by provider, model, and user.",
 		},
-		[]string{"provider", "model"},
+		[]string{"provider", "model", "user"},
 	)
 
 	completionTokensCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "ipp_usage_completion_tokens_total",
-			Help: "Total completion tokens consumed, by provider and model.",
+			Help: "Total completion tokens consumed, by provider, model, and user.",
 		},
-		[]string{"provider", "model"},
+		[]string{"provider", "model", "user"},
 	)
 
 	requestsCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "ipp_usage_requests_total",
-			Help: "Total inference requests, by provider and model.",
+			Help: "Total inference requests, by provider, model, and user.",
 		},
-		[]string{"provider", "model"},
+		[]string{"provider", "model", "user"},
 	)
 )
 
@@ -90,9 +92,18 @@ func (p *UsageTrackingPlugin) WithName(name string) *UsageTrackingPlugin {
 	return p
 }
 
-// ProcessResponse reads token usage from the response body (OpenAI-normalized format)
-// and records it as Prometheus counter increments. Errors are logged but never returned
-// — usage tracking is best-effort and must not block responses.
+// ProcessRequest captures the user identity from the X-MaaS-User header and stores it
+// in CycleState for use during response processing.
+func (p *UsageTrackingPlugin) ProcessRequest(ctx context.Context, cycleState *framework.CycleState, request *framework.InferenceRequest) error {
+	log.FromContext(ctx).V(logutil.VERBOSE).Info("usage-tracking request headers", "headers", request.Headers)
+	if user, ok := request.Headers["x-maas-user"]; ok && user != "" {
+		cycleState.Write(userKey, user)
+	}
+	return nil
+}
+
+// ProcessResponse reads token usage from the response body and records it as Prometheus
+// counter increments. Supports both OpenAI and Anthropic response formats.
 func (p *UsageTrackingPlugin) ProcessResponse(ctx context.Context, cycleState *framework.CycleState, response *framework.InferenceResponse) error {
 	providerName, err := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey)
 	if err != nil || providerName == "" {
@@ -104,7 +115,12 @@ func (p *UsageTrackingPlugin) ProcessResponse(ctx context.Context, cycleState *f
 		modelName = "unknown"
 	}
 
-	requestsCounter.WithLabelValues(providerName, modelName).Inc()
+	userName, _ := framework.ReadCycleStateKey[string](cycleState, userKey)
+	if userName == "" {
+		userName = "anonymous"
+	}
+
+	requestsCounter.WithLabelValues(providerName, modelName, userName).Inc()
 
 	usage, ok := response.Body["usage"].(map[string]any)
 	if !ok {
@@ -113,10 +129,14 @@ func (p *UsageTrackingPlugin) ProcessResponse(ctx context.Context, cycleState *f
 	}
 
 	if v, ok := toFloat64(usage["prompt_tokens"]); ok {
-		promptTokensCounter.WithLabelValues(providerName, modelName).Add(v)
+		promptTokensCounter.WithLabelValues(providerName, modelName, userName).Add(v)
+	} else if v, ok := toFloat64(usage["input_tokens"]); ok {
+		promptTokensCounter.WithLabelValues(providerName, modelName, userName).Add(v)
 	}
 	if v, ok := toFloat64(usage["completion_tokens"]); ok {
-		completionTokensCounter.WithLabelValues(providerName, modelName).Add(v)
+		completionTokensCounter.WithLabelValues(providerName, modelName, userName).Add(v)
+	} else if v, ok := toFloat64(usage["output_tokens"]); ok {
+		completionTokensCounter.WithLabelValues(providerName, modelName, userName).Add(v)
 	}
 
 	return nil
