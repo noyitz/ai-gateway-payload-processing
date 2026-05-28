@@ -163,7 +163,13 @@ claude
 
 **Step 3:** Use Claude Code normally. All requests route through MaaS.
 
-**To roll back:** Close the terminal tab. Open a fresh terminal — your Vertex config is untouched:
+### Reverting to Normal Claude (IMPORTANT)
+
+**After testing, you MUST revert.** The MaaS PoC uses a shared Anthropic API key — do not leave Claude Code pointed at MaaS for regular work.
+
+**Option A (easiest):** Close the MaaS terminal tab. Open a fresh terminal — your shell profile already has the Vertex config.
+
+**Option B (explicit):** In the same terminal:
 ```bash
 export CLAUDE_CODE_USE_VERTEX=1
 export ANTHROPIC_VERTEX_PROJECT_ID=<your-project>
@@ -171,6 +177,8 @@ unset ANTHROPIC_BASE_URL
 unset ANTHROPIC_API_KEY
 claude
 ```
+
+**How to verify you're back to normal:** When Claude Code starts, the status bar should NOT show "API Usage Billing". If it does, you're still on MaaS — close and try again.
 
 ### Testing with curl
 
