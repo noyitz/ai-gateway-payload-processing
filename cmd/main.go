@@ -29,7 +29,6 @@ import (
 	"sigs.k8s.io/gateway-api-inference-extension/cmd/bbr/runner"
 
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins"
-	usage_tracking "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/usage-tracking"
 )
 
 func main() {
@@ -38,7 +37,6 @@ func main() {
 
 	if err := runner.NewRunner().
 		WithExecutableName("ai-gateway-payload-processing").
-		WithCustomCollectors(usage_tracking.Collectors()...).
 		Run(ctrl.SetupSignalHandler()); err != nil {
 		os.Exit(1)
 	}
