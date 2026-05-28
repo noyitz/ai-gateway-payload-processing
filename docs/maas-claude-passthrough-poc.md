@@ -8,11 +8,12 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 - **Durable usage tracking** — every request recorded in PostgreSQL (user, model, tokens, cost)
 - **Grafana analytics dashboard** — per-org, per-user, per-model with cost calculations
 - **Streaming support** — full SSE streaming passthrough with usage extraction
-- **Prometheus real-time metrics** — live counters for operational monitoring
 
 **Repos:**
 - IPP plugins: `ai-gateway-payload-processing` branch `feature/maas-claude-passthrough-poc`
 - Framework SSE fix: `llm-d/llm-d-inference-payload-processor` [PR #138](https://github.com/llm-d/llm-d-inference-payload-processor/pull/138)
+
+**Interactive Flow Visualization:** https://noyitz.github.io/ai-gateway-docs/claude-passthrough/
 
 ---
 
@@ -36,14 +37,12 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
            │                              2. external-metering ──▶ Metering Svc ──▶ PostgreSQL
            │                              3. model-provider-resolver
            │                              4. apikey-injection (swaps to real API key)
-           │                              5. usage-tracking ──▶ Prometheus
            │                                      │       │
            │                                      ▼       │
            │                              Anthropic API   │
            │                              (api.anthropic.com)
            │                                              │
            │  Grafana ◀── PostgreSQL (durable analytics)  │
-           │  Grafana ◀── Prometheus (real-time counters)  │
            └──────────────────────────────────────────────┘
 ```
 
@@ -55,8 +54,7 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 
 | Plugin | File | Purpose |
 |--------|------|---------|
-| `usage-tracking` | `pkg/plugins/usage-tracking/plugin.go` | Prometheus counters (requests, prompt_tokens, completion_tokens) by provider/model/user. Reads `X-MaaS-Username` header. Strips `accept-encoding` to prevent gzip responses. |
-| `external-metering` | `pkg/plugins/external-metering/plugin.go` | Sends CloudEvents to metering service for durable PostgreSQL storage. Pre-request balance check. Skips `stream_options` injection for Anthropic format. |
+| `external-metering` | `pkg/plugins/external-metering/plugin.go` | Sends CloudEvents to metering service for durable PostgreSQL storage. Pre-request balance check. Parses SSE streaming responses for token usage. Skips `stream_options` injection for Anthropic format. |
 
 ### New Components
 
@@ -71,8 +69,7 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 |------|--------|
 | `pkg/plugins/model-provider-resolver/plugin.go` | Allow `/v1/messages` path (was hardcoded to `/chat/completions` only) |
 | `pkg/plugins/common/state/state-keys.go` | Added metering CycleState keys |
-| `pkg/plugins/plugins.go` | Registered `usage-tracking` and `external-metering` plugins |
-| `cmd/main.go` | Wired `WithCustomCollectors` for Prometheus export |
+| `pkg/plugins/plugins.go` | Registered `external-metering` plugin |
 | `go.mod` | Added `replace` directive to framework fork with SSE streaming fix |
 
 ### Upstream Framework Fix (PR to `llm-d/llm-d-inference-payload-processor`)
@@ -91,7 +88,7 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 | Setting | Value |
 |---------|-------|
 | Image | Built via OCP binary build to internal registry |
-| Plugin chain | `body-field-to-header` → `external-metering` → `model-provider-resolver` → `apikey-injection` → `usage-tracking` |
+| Plugin chain | `body-field-to-header` → `external-metering` → `model-provider-resolver` → `apikey-injection` |
 | Flags | `--streaming`, `--metrics-endpoint-auth=false`, `--tracing=false` |
 | Removed | `api-translation` (passthrough mode — no request/response format translation) |
 
@@ -110,14 +107,12 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 | ExternalModel `ext-claude-sonnet` | `llm` | provider: anthropic, targetModel: claude-opus-4-6 |
 | Secret `anthropic-api-key` | `llm` | Real Anthropic API key (labeled `bbr-managed`) |
 | MaaSModelRef `ext-claude-sonnet` | `llm` | Links ExternalModel to MaaS |
-| HTTPRoute `ext-claude-sonnet` | `llm` | URLRewrite: strips `/llm/ext-claude-sonnet` prefix |
+| HTTPRoute `ext-claude-sonnet` | `llm` | URLRewrite (`ReplacePrefixMatch: /`): strips `/llm/ext-claude-sonnet` prefix so Claude Code's `/v1/messages` reaches Anthropic API correctly |
 | MaaS Subscription | `models-as-a-service` | `ext-claude-sonnet` added to modelRefs |
 | MaaS AuthPolicy | `models-as-a-service` | `ext-claude-sonnet` added to modelRefs |
-| Service `payload-processing` | `openshift-ingress` | Added `metrics` port 9090 |
 | StatefulSet `metering-postgresql` | `openshift-ingress` | PostgreSQL 16, 1Gi PVC |
 | Deployment `metering-service` | `openshift-ingress` | Go HTTP metering service |
-| Deployment `prometheus` | `openshift-ingress` | Scrapes IPP metrics |
-| Deployment `grafana` | `openshift-ingress` | Analytics dashboard |
+| Deployment `grafana` | `openshift-ingress` | Analytics dashboard (queries PostgreSQL) |
 
 ### AuthConfig Patches (Authorino)
 
@@ -135,7 +130,6 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 | Operators scaled to 0 | MaaS AuthPolicy must support `x-api-key` header natively |
 | Manual AuthConfig patches | Upstream MaaS controller change |
 | Framework fork for SSE | [PR #138](https://github.com/llm-d/llm-d-inference-payload-processor/pull/138) to upstream |
-| `metrics-endpoint-auth=false` | Use ServiceMonitor with RBAC |
 
 ---
 
