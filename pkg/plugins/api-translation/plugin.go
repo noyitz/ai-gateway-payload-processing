@@ -98,7 +98,6 @@ func NewAPITranslationPlugin(ctx context.Context, config apiTranslationConfig) (
 			config.VertexOpenAI.Endpoint,
 		)
 		providers[provider.VertexOpenAI] = vertexTranslator
-		providers[provider.VertexOAuth] = vertexTranslator
 	}
 
 	keys := make([]string, 0, len(providers))

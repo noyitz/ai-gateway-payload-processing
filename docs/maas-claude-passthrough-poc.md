@@ -11,8 +11,8 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 - **Prometheus real-time metrics** — live counters for operational monitoring
 
 **Repos:**
-- IPP plugins: `ai-gateway-payload-processing` branch `feature/vertex-oauth-passthrough`
-- Framework SSE fix: `llm-d/llm-d-inference-payload-processor` branch `fix/sse-response-parsing` ([PR](https://github.com/noyitz/llm-d-inference-payload-processor/pull/new/fix/sse-response-parsing))
+- IPP plugins: `ai-gateway-payload-processing` branch `feature/maas-claude-passthrough-poc`
+- Framework SSE fix: `llm-d/llm-d-inference-payload-processor` [PR #138](https://github.com/llm-d/llm-d-inference-payload-processor/pull/138)
 
 ---
 
@@ -70,13 +70,10 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 | File | Change |
 |------|--------|
 | `pkg/plugins/model-provider-resolver/plugin.go` | Allow `/v1/messages` path (was hardcoded to `/chat/completions` only) |
-| `pkg/plugins/common/provider/provider.go` | Added `VertexOAuth` provider constant |
 | `pkg/plugins/common/state/state-keys.go` | Added metering CycleState keys |
-| `pkg/plugins/apikey-injection/plugin.go` | Registered `OAuthAuthGenerator` for vertex-oauth |
-| `pkg/plugins/apikey-injection/auth/oauth_auth_generator.go` | New: GCP SA key → OAuth token exchange with caching |
 | `pkg/plugins/plugins.go` | Registered `usage-tracking` and `external-metering` plugins |
 | `cmd/main.go` | Wired `WithCustomCollectors` for Prometheus export |
-| `go.mod` | Added `replace` directive to framework fork with SSE fix |
+| `go.mod` | Added `replace` directive to framework fork with SSE streaming fix |
 
 ### Upstream Framework Fix (PR to `llm-d/llm-d-inference-payload-processor`)
 
@@ -93,10 +90,10 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 
 | Setting | Value |
 |---------|-------|
-| Image | Built via OCP binary build, tagged `vertex-oauth` |
+| Image | Built via OCP binary build to internal registry |
 | Plugin chain | `body-field-to-header` → `external-metering` → `model-provider-resolver` → `apikey-injection` → `usage-tracking` |
 | Flags | `--streaming`, `--metrics-endpoint-auth=false`, `--tracing=false` |
-| Removed | `api-translation` (passthrough mode), `external-metering` old PoC |
+| Removed | `api-translation` (passthrough mode — no request/response format translation) |
 
 ### EnvoyFilter
 
@@ -135,10 +132,9 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 
 | Workaround | Production Fix |
 |------------|---------------|
-| Direct Anthropic API key (not Vertex SA) | Obtain GCP SA key or use Workload Identity |
-| Operators scaled to 0 | MaaS AuthPolicy must support `x-api-key` natively |
+| Operators scaled to 0 | MaaS AuthPolicy must support `x-api-key` header natively |
 | Manual AuthConfig patches | Upstream MaaS controller change |
-| Framework fork for SSE | PR to `llm-d/llm-d-inference-payload-processor` |
+| Framework fork for SSE | [PR #138](https://github.com/llm-d/llm-d-inference-payload-processor/pull/138) to upstream |
 | `metrics-endpoint-auth=false` | Use ServiceMonitor with RBAC |
 
 ---
@@ -149,7 +145,7 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 
 You need: a MaaS API key (provided by your admin) and the MaaS endpoint URL.
 
-**Step 1:** Open a new terminal tab (don't modify your existing config).
+**Step 1:** Open a **new terminal tab** (don't modify your existing config).
 
 **Step 2:** Set environment variables:
 ```bash
@@ -282,10 +278,8 @@ oc scale deployment kuadrant-operator-controller-manager -n kuadrant-system --re
 
 ## Known Limitations
 
-1. **Streaming token counts** — SSE streaming responses are parsed for usage data via a framework fix (PR pending to `llm-d/llm-d-inference-payload-processor`). Response body chunks are accumulated in-memory for parsing; bounded by `max_tokens` (typically <100KB).
+1. **Streaming token counts** — SSE streaming responses are parsed for usage data via a framework fix ([PR #138](https://github.com/llm-d/llm-d-inference-payload-processor/pull/138)). Response body chunks are accumulated in-memory for parsing; bounded by `max_tokens` (typically <100KB).
 
 2. **AuthConfig patches** — The `x-api-key` auth method and `X-MaaS-Username` header injection are manual AuthConfig patches. MaaS controller and Kuadrant operator must be scaled to 0 to prevent overwriting. Production requires upstream MaaS controller changes.
 
-3. **Vertex AI OAuth** — `OAuthAuthGenerator` is implemented and tested but needs a GCP service account key for `itpc-gcp-ai-eng-claude`. Currently using direct Anthropic API key as a working alternative.
-
-4. **Intermittent 503s** — TLS connection resets to `api.anthropic.com` via Istio occasionally cause 503 errors. Claude Code's built-in retry handles this transparently.
+3. **Intermittent 503s** — TLS connection resets to `api.anthropic.com` via Istio occasionally cause 503 errors. Claude Code's built-in retry handles this transparently.
