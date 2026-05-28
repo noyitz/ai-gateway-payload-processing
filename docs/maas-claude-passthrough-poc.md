@@ -89,7 +89,7 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 |---------|-------|
 | Image | Built via OCP binary build to internal registry |
 | Plugin chain | `body-field-to-header` → `external-metering` → `model-provider-resolver` → `apikey-injection` |
-| Flags | `--streaming`, `--metrics-endpoint-auth=false`, `--tracing=false` |
+| Flags | `--streaming` |
 | Removed | `api-translation` (passthrough mode — no request/response format translation) |
 
 ### EnvoyFilter
@@ -191,7 +191,9 @@ curl -s <MAAS_ENDPOINT_URL>/v1/messages \
 
 ### Adding a New User
 
-**Step 1:** Create a MaaS API key for the user:
+**In production**, users would authenticate to MaaS via the gateway (OpenShift SSO) and mint their own API key through a self-service portal or CLI call to `POST /v1/api-keys`. No admin intervention needed.
+
+**In this PoC**, the MaaS API is only accessible internally (no external route), so an admin creates keys on behalf of users:
 
 ```bash
 oc exec -n redhat-ods-applications deployment/maas-api -- curl -sk \
@@ -212,9 +214,7 @@ Response includes the API key (shown only once):
 }
 ```
 
-**Step 2:** Send the key to the user securely (not via email/Slack in plaintext).
-
-**Step 3:** No other cluster changes needed — the key automatically has access to all models in the subscription.
+Send the key to the user securely. No other cluster changes needed — the key automatically has access to all models in the subscription.
 
 ### Revoking a User's Key
 
