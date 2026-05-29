@@ -125,11 +125,36 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 		return errcommon.Error{Code: errcommon.BadRequest, Msg: "only /chat/completions and /messages input types are supported"}
 	}
 
-	// if there's a mismatch it's an error, we don't want to proceed
 	if externalModelInfo.targetModel != model {
-		logger.Error(nil, "model mismatch between request body and ExternalModel", "requestModel", model, "externalModel", externalModelInfo.targetModel)
-		return errcommon.Error{Code: errcommon.NotFound, Msg: fmt.Sprintf("model in request body '%s' doesn't match ExternalModel", model)}
+		logger.Info("model override: request model differs from ExternalModel target, using target", "requestModel", model, "targetModel", externalModelInfo.targetModel)
+
+		// Debug: log all body keys and headers
+		bodyKeys := make([]string, 0, len(request.Body))
+		for k := range request.Body {
+			bodyKeys = append(bodyKeys, k)
+		}
+		logger.Info("DEBUG body keys before stripping", "keys", bodyKeys)
+		logger.Info("DEBUG anthropic-beta header", "value", request.Headers["anthropic-beta"])
+
+		request.SetBodyField("model", externalModelInfo.targetModel)
+		// Strip parameters that may not be supported by the target model
+		for _, unsupported := range []string{"effort", "thinking", "output_config"} {
+			if _, has := request.Body[unsupported]; has {
+				delete(request.Body, unsupported)
+				logger.Info("stripped unsupported body parameter for target model", "param", unsupported)
+			}
+		}
+		request.SetBody(request.Body)
+		// Strip effort beta flag from anthropic-beta header
+		if beta, ok := request.Headers["anthropic-beta"]; ok {
+			cleaned := stripBetaFlag(beta, "effort-")
+			if cleaned != beta {
+				request.SetHeader("anthropic-beta", cleaned)
+				logger.Info("stripped effort beta flag from anthropic-beta header")
+			}
+		}
 	}
+	request.RemoveHeader("accept-encoding")
 
 	// info of external model written to cycle state for next plugins
 	cycleState.Write(state.ProviderKey, externalModelInfo.provider)
@@ -149,4 +174,15 @@ func sanitizePath(relativeUrlPath string) string {
 	}
 
 	return strings.Trim(relativeUrlPath, "/")
+}
+
+func stripBetaFlag(header, prefix string) string {
+	parts := strings.Split(header, ",")
+	var kept []string
+	for _, p := range parts {
+		if !strings.HasPrefix(strings.TrimSpace(p), prefix) {
+			kept = append(kept, strings.TrimSpace(p))
+		}
+	}
+	return strings.Join(kept, ",")
 }
