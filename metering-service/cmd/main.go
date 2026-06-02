@@ -34,10 +34,12 @@ func main() {
 
 	eventsHandler := handler.NewEventsHandler(store)
 	entitlementsHandler := handler.NewEntitlementsHandler(store)
+	teamUsageHandler := handler.NewTeamUsageHandler(store)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/events", eventsHandler.HandleEvent)
 	mux.HandleFunc("/api/v1/customers/", entitlementsHandler.HandleEntitlement)
+	mux.HandleFunc("/api/v1/team-usage", teamUsageHandler.HandleTeamUsage)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
