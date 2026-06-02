@@ -73,6 +73,78 @@ func (s *Store) InsertEvent(ctx context.Context, e UsageEvent) error {
 	return err
 }
 
+type TeamUserUsage struct {
+	Username         string             `json:"username"`
+	Requests         int                `json:"requests"`
+	PromptTokens     int                `json:"prompt_tokens"`
+	CompletionTokens int                `json:"completion_tokens"`
+	TotalTokens      int                `json:"total_tokens"`
+	CostUSD          float64            `json:"cost_usd"`
+	Models           []ModelUsage       `json:"models"`
+}
+
+type ModelUsage struct {
+	Model            string  `json:"model"`
+	Provider         string  `json:"provider"`
+	Requests         int     `json:"requests"`
+	TotalTokens      int     `json:"total_tokens"`
+	CostUSD          float64 `json:"cost_usd"`
+}
+
+func (s *Store) GetTeamUsage(ctx context.Context, groupName string) ([]TeamUserUsage, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT e.username, e.model, e.provider,
+			COUNT(*) as requests,
+			SUM(e.prompt_tokens) as prompt_tokens,
+			SUM(e.completion_tokens) as completion_tokens,
+			SUM(e.total_tokens) as total_tokens,
+			ROUND(SUM(e.prompt_tokens * COALESCE(p.prompt_cost_per_1k, 0.015)/1000.0 +
+				e.completion_tokens * COALESCE(p.completion_cost_per_1k, 0.075)/1000.0)::numeric, 4) as cost_usd
+		FROM usage_events e
+		LEFT JOIN model_pricing p ON e.model = p.model
+		WHERE e.group_name = $1
+		GROUP BY e.username, e.model, e.provider
+		ORDER BY e.username, total_tokens DESC`, groupName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	userMap := make(map[string]*TeamUserUsage)
+	var order []string
+
+	for rows.Next() {
+		var username, model, provider string
+		var requests, promptTokens, completionTokens, totalTokens int
+		var costUSD float64
+		if err := rows.Scan(&username, &model, &provider, &requests, &promptTokens, &completionTokens, &totalTokens, &costUSD); err != nil {
+			return nil, err
+		}
+
+		u, ok := userMap[username]
+		if !ok {
+			u = &TeamUserUsage{Username: username}
+			userMap[username] = u
+			order = append(order, username)
+		}
+		u.Requests += requests
+		u.PromptTokens += promptTokens
+		u.CompletionTokens += completionTokens
+		u.TotalTokens += totalTokens
+		u.CostUSD += costUSD
+		u.Models = append(u.Models, ModelUsage{
+			Model: model, Provider: provider,
+			Requests: requests, TotalTokens: totalTokens, CostUSD: costUSD,
+		})
+	}
+
+	result := make([]TeamUserUsage, 0, len(order))
+	for _, name := range order {
+		result = append(result, *userMap[name])
+	}
+	return result, nil
+}
+
 func (s *Store) GetMonthlyUsage(ctx context.Context, username, model string) (UsageStats, error) {
 	var used int64
 	row := s.db.QueryRowContext(ctx,
