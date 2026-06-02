@@ -1,13 +1,15 @@
-# MaaS Claude Passthrough PoC — Design, Implementation & Operations Manual
+# MaaS AI Coding Tools PoC — Design, Implementation & Operations Manual
 
 ## Overview
 
-This PoC routes Claude Code through the MaaS (Models as a Service) gateway on OpenShift, providing:
-- **Per-user API keys** — each developer gets their own MaaS key
-- **Centralized credential management** — the real Anthropic API key lives in a K8s Secret, users never see it
+This PoC routes **Claude Code** and **OpenAI Codex** through the MaaS (Models as a Service) gateway on OpenShift, providing:
+- **Multi-provider support** — Anthropic (Claude) and OpenAI (GPT/Codex) through the same gateway
+- **Per-user API keys** — each developer gets their own MaaS key, works for both Claude Code and Codex
+- **Centralized credential management** — real provider API keys live in K8s Secrets, users never see them
 - **Durable usage tracking** — every request recorded in PostgreSQL (user, model, tokens, cost)
-- **Grafana analytics dashboard** — per-org, per-user, per-model with cost calculations
-- **Streaming support** — full SSE streaming passthrough with usage extraction
+- **Grafana analytics dashboard** — per-user, per-model with cost calculations
+- **Streaming support** — full SSE streaming passthrough with usage extraction (Anthropic + OpenAI formats)
+- **Transparent model swapping** — admin can switch the backend model without users knowing
 
 **Repos:**
 - IPP plugins: `ai-gateway-payload-processing` branch `feature/maas-claude-passthrough-poc`
@@ -22,9 +24,14 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 ```
 ┌─────────────┐
 │ Claude Code  │  x-api-key: sk-oai-<user-key>
-│ (User A/B)   │──────────────────────────────┐
-└─────────────┘                               │
-                                              ▼
+│ (Anthropic)  │──┐
+└─────────────┘   │
+                  │    Same MaaS API key
+┌─────────────┐   │
+│ Codex        │──┤   Authorization: Bearer sk-oai-<user-key>
+│ (OpenAI)     │  │
+└─────────────┘   │
+                  ▼
            ┌──────────────────────────────────────────────┐
            │              OpenShift Cluster                │
            │                                              │
@@ -37,10 +44,10 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
            │                              2. external-metering ──▶ Metering Svc ──▶ PostgreSQL
            │                              3. model-provider-resolver
            │                              4. apikey-injection (swaps to real API key)
-           │                                      │       │
-           │                                      ▼       │
-           │                              Anthropic API   │
-           │                              (api.anthropic.com)
+           │                                    │   │     │
+           │                          ┌─────────┘   └──┐  │
+           │                          ▼                ▼  │
+           │                   Anthropic API    OpenAI API │
            │                                              │
            │  Grafana ◀── PostgreSQL (durable analytics)  │
            └──────────────────────────────────────────────┘
@@ -54,7 +61,7 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 
 | Plugin | File | Purpose |
 |--------|------|---------|
-| `external-metering` | `pkg/plugins/external-metering/plugin.go` | Sends CloudEvents to metering service for durable PostgreSQL storage. Pre-request balance check. Parses SSE streaming responses for token usage. Skips `stream_options` injection for Anthropic format. |
+| `external-metering` | `pkg/plugins/external-metering/plugin.go` | Sends CloudEvents to metering service for durable PostgreSQL storage. Pre-request balance check. Parses SSE streaming responses for token usage (both Anthropic and OpenAI formats). |
 
 ### New Components
 
@@ -67,7 +74,7 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 
 | File | Change |
 |------|--------|
-| `pkg/plugins/model-provider-resolver/plugin.go` | Allow `/v1/messages` path (was hardcoded to `/chat/completions` only) |
+| `pkg/plugins/model-provider-resolver/plugin.go` | Allow `/v1/messages` (Anthropic) and `/v1/responses` (OpenAI Codex) paths — was hardcoded to `/chat/completions` only. Also: transparent model override with parameter stripping when `targetModel` differs from request. |
 | `pkg/plugins/common/state/state-keys.go` | Added metering CycleState keys |
 | `pkg/plugins/plugins.go` | Registered `external-metering` plugin |
 | `go.mod` | Added `replace` directive to framework fork with SSE streaming fix |
@@ -76,7 +83,7 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 
 | File | Change |
 |------|--------|
-| `pkg/handlers/response.go` | Parse SSE streaming responses (extract usage from `data:` lines). Always respond to response headers so Envoy proceeds with body chunks. |
+| `pkg/handlers/response.go` | Parse SSE streaming responses — supports both Anthropic format (`usage` at top level) and OpenAI Responses API format (`usage` nested in `response.completed` event). Always respond to response headers so Envoy proceeds with body chunks. |
 | `pkg/handlers/server.go` | Send immediate ack for non-EoS response body chunks so Envoy continues forwarding (was blocking after first chunk). |
 
 ---
@@ -104,12 +111,14 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 
 | Resource | Namespace | Purpose |
 |----------|-----------|---------|
-| ExternalModel `ext-claude-sonnet` | `llm` | provider: anthropic, targetModel: claude-opus-4-6 |
+| ExternalModel `ext-claude-sonnet` | `llm` | provider: anthropic, targetModel: claude-opus-4-6, endpoint: api.anthropic.com |
+| ExternalModel `ext-openai` | `llm` | provider: openai, targetModel: gpt-5.5, endpoint: api.openai.com |
 | Secret `anthropic-api-key` | `llm` | Real Anthropic API key (labeled `bbr-managed`) |
-| MaaSModelRef `ext-claude-sonnet` | `llm` | Links ExternalModel to MaaS |
-| HTTPRoute `ext-claude-sonnet` | `llm` | URLRewrite (`ReplacePrefixMatch: /`): strips `/llm/ext-claude-sonnet` prefix so Claude Code's `/v1/messages` reaches Anthropic API correctly |
-| MaaS Subscription | `models-as-a-service` | `ext-claude-sonnet` added to modelRefs |
-| MaaS AuthPolicy | `models-as-a-service` | `ext-claude-sonnet` added to modelRefs |
+| Secret `openai-api-key` | `llm` | Real OpenAI API key (labeled `bbr-managed`) |
+| MaaSModelRef (per model) | `llm` | Links ExternalModel to MaaS |
+| HTTPRoute (per model) | `llm` | URLRewrite (`ReplacePrefixMatch: /`): strips path prefix so provider APIs receive correct paths |
+| MaaS Subscription | `models-as-a-service` | All models added to modelRefs |
+| MaaS AuthPolicy | `models-as-a-service` | All models added to modelRefs |
 | StatefulSet `metering-postgresql` | `openshift-ingress` | PostgreSQL 16, 1Gi PVC |
 | Deployment `metering-service` | `openshift-ingress` | Go HTTP metering service |
 | Deployment `grafana` | `openshift-ingress` | Analytics dashboard (queries PostgreSQL) |
@@ -119,8 +128,8 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 | Change | Why |
 |--------|-----|
 | Added `api-keys-via-xapikey` auth method | Claude Code sends key in `x-api-key` header, not `Authorization: Bearer` |
-| Updated `apiKeyValidation` expression | Extract key from `x-api-key` when present |
-| Added `X-MaaS-Username` response header | Injects username into request for IPP to read |
+| Updated `apiKeyValidation` expression | Extract key from `x-api-key` or `Authorization` header |
+| Added `X-MaaS-Username` response header | Injects username into request for IPP to read (all models) |
 | MaaS controller + Kuadrant operator scaled to 0 | Prevent overwriting manual AuthConfig patches |
 
 ### Workarounds (PoC only)
@@ -130,20 +139,18 @@ This PoC routes Claude Code through the MaaS (Models as a Service) gateway on Op
 | Operators scaled to 0 | MaaS AuthPolicy must support `x-api-key` header natively |
 | Manual AuthConfig patches | Upstream MaaS controller change |
 | Framework fork for SSE | [PR #138](https://github.com/llm-d/llm-d-inference-payload-processor/pull/138) to upstream |
+| External metering + PostgreSQL | Can be replaced by native Limitador metrics with Tenant telemetry enabled (requires clean MaaS install with Kuadrant 1.4.2+) |
 
 ---
 
 ## User Setup Guide
 
-### For End Users (Developers)
+### Claude Code
 
-You need: a MaaS API key (provided by your admin) and the MaaS endpoint URL.
+Open a **new terminal tab** (don't modify your existing config):
 
-**Step 1:** Open a **new terminal tab** (don't modify your existing config).
-
-**Step 2:** Set environment variables:
 ```bash
-export ANTHROPIC_BASE_URL=<MAAS_ENDPOINT_URL>
+export ANTHROPIC_BASE_URL=<MAAS_CLAUDE_ENDPOINT_URL>
 export ANTHROPIC_API_KEY=<YOUR_MAAS_API_KEY>
 export NODE_TLS_REJECT_UNAUTHORIZED=0
 unset CLAUDE_CODE_USE_VERTEX
@@ -151,15 +158,7 @@ unset ANTHROPIC_VERTEX_PROJECT_ID
 claude
 ```
 
-**Step 3:** Use Claude Code normally. All requests route through MaaS.
-
-### Reverting to Normal Claude (IMPORTANT)
-
-**After testing, you MUST revert.** The MaaS PoC uses a shared Anthropic API key — do not leave Claude Code pointed at MaaS for regular work.
-
-**Option A (easiest):** Close the MaaS terminal tab. Open a fresh terminal — your shell profile already has the Vertex config.
-
-**Option B (explicit):** In the same terminal:
+**To revert:** Close the tab. Or explicitly:
 ```bash
 export CLAUDE_CODE_USE_VERTEX=1
 export ANTHROPIC_VERTEX_PROJECT_ID=<your-project>
@@ -168,21 +167,56 @@ unset ANTHROPIC_API_KEY
 claude
 ```
 
-**How to verify you're back to normal:** When Claude Code starts, the status bar should NOT show "API Usage Billing". If it does, you're still on MaaS — close and try again.
+**How to verify you're back to normal:** When Claude Code starts, the status bar should NOT show "API Usage Billing".
+
+### OpenAI Codex
+
+**Install:**
+```bash
+npm install -g @openai/codex
+```
+
+**Configure `~/.codex/config.toml`:**
+```toml
+model = "gpt-5.5"
+model_provider = "maas"
+
+[model_providers.maas]
+name = "MaaS Gateway"
+base_url = "<MAAS_OPENAI_ENDPOINT_URL>/v1"
+wire_api = "responses"
+env_key = "MAAS_API_KEY"
+```
+
+**Run (new terminal tab):**
+```bash
+export MAAS_API_KEY=<YOUR_MAAS_API_KEY>
+export NODE_TLS_REJECT_UNAUTHORIZED=0
+codex
+```
+
+**To revert:** Remove or comment out the `model_provider` and `[model_providers.maas]` lines from `~/.codex/config.toml`.
 
 ### Testing with curl
 
+**Anthropic (Claude):**
 ```bash
-curl -s <MAAS_ENDPOINT_URL>/v1/messages \
+curl -s <MAAS_CLAUDE_ENDPOINT_URL>/v1/messages \
   --insecure \
   -H "Content-Type: application/json" \
   -H "anthropic-version: 2023-06-01" \
   -H "x-api-key: <YOUR_MAAS_API_KEY>" \
-  -d '{
-    "model": "claude-opus-4-6",
-    "max_tokens": 100,
-    "messages": [{"role": "user", "content": "What is MaaS?"}]
-  }'
+  -d '{"model": "claude-opus-4-6", "max_tokens": 100,
+       "messages": [{"role": "user", "content": "What is MaaS?"}]}'
+```
+
+**OpenAI (Codex/GPT):**
+```bash
+curl -s <MAAS_OPENAI_ENDPOINT_URL>/v1/responses \
+  --insecure \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <YOUR_MAAS_API_KEY>" \
+  -d '{"model": "gpt-5.5", "input": "What is MaaS?"}'
 ```
 
 ---
@@ -214,7 +248,7 @@ Response includes the API key (shown only once):
 }
 ```
 
-Send the key to the user securely. No other cluster changes needed — the key automatically has access to all models in the subscription.
+Send the key to the user securely. The same key works for both Claude Code and Codex. No other cluster changes needed.
 
 ### Revoking a User's Key
 
@@ -225,28 +259,31 @@ oc exec -n redhat-ods-applications deployment/maas-api -- curl -sk \
   -H 'X-MaaS-Group: ["system:authenticated"]'
 ```
 
+### Transparent Model Swapping
+
+An admin can change the backend model without users knowing:
+
+```bash
+# Swap Claude users to Sonnet (cheaper)
+oc patch externalmodel ext-claude-sonnet -n llm --type=merge \
+  -p '{"spec":{"targetModel":"claude-sonnet-4-20250514"}}'
+
+# Swap back to Opus
+oc patch externalmodel ext-claude-sonnet -n llm --type=merge \
+  -p '{"spec":{"targetModel":"claude-opus-4-6"}}'
+```
+
+The model-provider-resolver automatically rewrites the model field in the request body and strips incompatible parameters (`effort`, `thinking`, `output_config`) when overriding.
+
 ### Viewing Usage Data
 
 **Grafana Dashboard:** Browse to the Grafana route URL → "MaaS Usage Analytics" dashboard.
 
 Panels:
 - **Company Overview:** Total requests, tokens, estimated cost ($), active users
-- **Organization Breakdown:** Top 10 orgs by token usage, org spend over time
 - **User Breakdown:** Top 10 users, user spend over time, sortable user summary table
 - **Model Breakdown:** Usage by model (pie), cost comparison, tokens over time
 - **Detailed Log:** Full event table with timestamp, user, model, tokens, cost
-
-**PostgreSQL direct query:**
-```bash
-oc exec metering-postgresql-0 -n openshift-ingress -- \
-  psql -U metering -c "
-    SELECT e.username, COUNT(*) as requests,
-      SUM(e.total_tokens) as tokens,
-      ROUND(SUM(e.prompt_tokens * COALESCE(p.prompt_cost_per_1k, 0.003)/1000.0 +
-        e.completion_tokens * COALESCE(p.completion_cost_per_1k, 0.015)/1000.0)::numeric, 4) as cost_usd
-    FROM usage_events e LEFT JOIN model_pricing p ON e.model = p.model
-    GROUP BY e.username ORDER BY cost_usd DESC"
-```
 
 ### Updating Model Pricing
 
@@ -272,8 +309,10 @@ oc scale deployment kuadrant-operator-controller-manager -n kuadrant-system --re
 
 ## Known Limitations
 
-1. **Streaming token counts** — SSE streaming responses are parsed for usage data via a framework fix ([PR #138](https://github.com/llm-d/llm-d-inference-payload-processor/pull/138)). Response body chunks are accumulated in-memory for parsing; bounded by `max_tokens` (typically <100KB).
+1. **Streaming token counts** — SSE streaming responses are parsed for usage data via a framework fix ([PR #138](https://github.com/llm-d/llm-d-inference-payload-processor/pull/138)). Supports both Anthropic (`message_delta` events) and OpenAI Responses API (`response.completed` events). Response body chunks are accumulated in-memory; bounded by `max_tokens`.
 
-2. **AuthConfig patches** — The `x-api-key` auth method and `X-MaaS-Username` header injection are manual AuthConfig patches. MaaS controller and Kuadrant operator must be scaled to 0 to prevent overwriting. Production requires upstream MaaS controller changes.
+2. **AuthConfig patches** — The `x-api-key` auth method and `X-MaaS-Username` header injection are manual AuthConfig patches applied to ALL model AuthConfigs. MaaS controller and Kuadrant operator must be scaled to 0 to prevent overwriting. Production requires upstream MaaS controller changes.
 
-3. **Intermittent 503s** — TLS connection resets to `api.anthropic.com` via Istio occasionally cause 503 errors. Claude Code's built-in retry handles this transparently.
+3. **External metering stack** — The PostgreSQL + metering service can be eliminated once native Limitador metrics with per-user labels are available (requires Tenant telemetry feature on a clean MaaS install with Kuadrant 1.4.2+).
+
+4. **Intermittent 503s** — TLS connection resets to provider APIs via Istio occasionally cause 503 errors. Both Claude Code and Codex have built-in retry that handles this transparently.

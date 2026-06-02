@@ -122,4 +122,4 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace sigs.k8s.io/gateway-api-inference-extension => github.com/noyitz/gateway-api-inference-extension v0.0.0-20260528193428-5b8d6d11aca8
+replace sigs.k8s.io/gateway-api-inference-extension => github.com/noyitz/gateway-api-inference-extension v0.0.0-20260601205022-b166cf0c7b3c
