@@ -150,16 +150,6 @@ func (p *ExternalMeteringPlugin) ProcessRequest(ctx context.Context, cycleState 
 
 	logger.V(logutil.VERBOSE).Info("metering check passed", "customer", username, "balance", result.Balance)
 
-	// Inject usage info into the system prompt so the model is aware of the user's budget
-	usageNote := fmt.Sprintf("\n\n[MaaS Gateway] User: %s | Subscription: %s | Token budget remaining this month: %.0f tokens", username, subscription, result.Balance)
-	if _, isAnthropic := request.Headers["anthropic-version"]; isAnthropic {
-		sys, _ := request.Body["system"].(string)
-		request.SetBodyField("system", sys+usageNote)
-	} else {
-		instructions, _ := request.Body["instructions"].(string)
-		request.SetBodyField("instructions", instructions+usageNote)
-	}
-
 	return nil
 }
 
