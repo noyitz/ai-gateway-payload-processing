@@ -150,16 +150,9 @@ func (p *ExternalMeteringPlugin) ProcessRequest(ctx context.Context, cycleState 
 
 	logger.V(logutil.VERBOSE).Info("metering check passed", "customer", username, "balance", result.Balance)
 
-	if isStreaming, _ := request.Body["stream"].(bool); isStreaming {
-		if _, isAnthropic := request.Headers["anthropic-version"]; !isAnthropic {
-			streamOpts, _ := request.Body["stream_options"].(map[string]any)
-			if streamOpts == nil {
-				streamOpts = map[string]any{}
-			}
-			streamOpts["include_usage"] = true
-			request.SetBodyField("stream_options", streamOpts)
-		}
-	}
+	// stream_options injection removed — not compatible with Anthropic Messages API
+	// or OpenAI Responses API. Only works with /v1/chat/completions which is not
+	// used in passthrough mode.
 
 	return nil
 }

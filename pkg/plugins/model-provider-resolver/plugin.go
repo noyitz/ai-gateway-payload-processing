@@ -120,9 +120,9 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 		return nil // this is not considered an error, we just need to skip if it's internal model
 	}
 
-	if !strings.HasSuffix(relativePath, "chat/completions") && !strings.HasSuffix(relativePath, "messages") {
+	if !strings.HasSuffix(relativePath, "chat/completions") && !strings.HasSuffix(relativePath, "messages") && !strings.HasSuffix(relativePath, "responses") {
 		logger.Error(nil, "unsupported route for external model", "model", modelKey.String(), "path", relativePath)
-		return errcommon.Error{Code: errcommon.BadRequest, Msg: "only /chat/completions and /messages input types are supported"}
+		return errcommon.Error{Code: errcommon.BadRequest, Msg: "only /chat/completions, /messages, and /responses input types are supported"}
 	}
 
 	if externalModelInfo.targetModel != model {
