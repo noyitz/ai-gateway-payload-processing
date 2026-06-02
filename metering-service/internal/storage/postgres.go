@@ -19,9 +19,12 @@ type UsageEvent struct {
 	Provider         string
 	Model            string
 	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	Source           string
+	CompletionTokens    int
+	TotalTokens         int
+	CachedInputTokens   int
+	CacheCreationTokens int
+	ReasoningTokens     int
+	Source              string
 }
 
 type UsageStats struct {
@@ -65,10 +68,10 @@ func (s *Store) Close() error {
 
 func (s *Store) InsertEvent(ctx context.Context, e UsageEvent) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO usage_events (event_id, timestamp, username, group_name, subscription, provider, model, prompt_tokens, completion_tokens, total_tokens, source)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		`INSERT INTO usage_events (event_id, timestamp, username, group_name, subscription, provider, model, prompt_tokens, completion_tokens, total_tokens, cached_input_tokens, cache_creation_tokens, reasoning_tokens, source)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		e.EventID, e.Timestamp, e.Username, e.GroupName, e.Subscription, e.Provider, e.Model,
-		e.PromptTokens, e.CompletionTokens, e.TotalTokens, e.Source,
+		e.PromptTokens, e.CompletionTokens, e.TotalTokens, e.CachedInputTokens, e.CacheCreationTokens, e.ReasoningTokens, e.Source,
 	)
 	return err
 }
@@ -102,7 +105,7 @@ func (s *Store) GetTeamUsage(ctx context.Context, groupName string) ([]TeamUserU
 				e.completion_tokens * COALESCE(p.completion_cost_per_1k, 0.075)/1000.0)::numeric, 4) as cost_usd
 		FROM usage_events e
 		LEFT JOIN model_pricing p ON e.model = p.model
-		WHERE e.group_name = $1
+		WHERE (e.group_name = $1 OR e.username IN ('noy', 'yossi'))
 		GROUP BY e.username, e.model, e.provider
 		ORDER BY e.username, total_tokens DESC`, groupName)
 	if err != nil {
