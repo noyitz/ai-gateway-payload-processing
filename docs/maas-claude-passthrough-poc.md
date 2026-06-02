@@ -316,3 +316,5 @@ oc scale deployment kuadrant-operator-controller-manager -n kuadrant-system --re
 3. **External metering stack** — The PostgreSQL + metering service can be eliminated once native Limitador metrics with per-user labels are available (requires Tenant telemetry feature on a clean MaaS install with Kuadrant 1.4.2+).
 
 4. **Intermittent 503s** — TLS connection resets to provider APIs via Istio occasionally cause 503 errors. Both Claude Code and Codex have built-in retry that handles this transparently.
+
+5. **Kuadrant Wasm SSE bug** — `authorized_hits` (token-level) metric not emitted for SSE streaming responses. The Wasm plugin can't parse SSE to extract `usage.total_tokens`. Bug filed: https://github.com/Kuadrant/wasm-shim/issues/373. Workaround: external-metering IPP plugin with SSE parsing.

@@ -26,9 +26,12 @@ type cloudEventData struct {
 	Subscription     string `json:"subscription"`
 	Provider         string `json:"provider"`
 	Model            string `json:"model"`
-	PromptTokens     int    `json:"prompt_tokens"`
-	CompletionTokens int    `json:"completion_tokens"`
-	TotalTokens      int    `json:"total_tokens"`
+	PromptTokens       int `json:"prompt_tokens"`
+	CompletionTokens   int `json:"completion_tokens"`
+	TotalTokens        int `json:"total_tokens"`
+	CachedInputTokens  int `json:"cached_input_tokens"`
+	CacheCreationTokens int `json:"cache_creation_tokens"`
+	ReasoningTokens    int `json:"reasoning_tokens"`
 }
 
 type EventsHandler struct {
@@ -63,17 +66,20 @@ func (h *EventsHandler) HandleEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	usageEvent := storage.UsageEvent{
-		EventID:          event.ID,
-		Timestamp:        ts,
-		Username:         event.Data.User,
-		GroupName:        event.Data.Group,
-		Subscription:     event.Data.Subscription,
-		Provider:         event.Data.Provider,
-		Model:            event.Data.Model,
-		PromptTokens:     event.Data.PromptTokens,
-		CompletionTokens: event.Data.CompletionTokens,
-		TotalTokens:      total,
-		Source:           event.Source,
+		EventID:             event.ID,
+		Timestamp:           ts,
+		Username:            event.Data.User,
+		GroupName:           event.Data.Group,
+		Subscription:        event.Data.Subscription,
+		Provider:            event.Data.Provider,
+		Model:               event.Data.Model,
+		PromptTokens:        event.Data.PromptTokens,
+		CompletionTokens:    event.Data.CompletionTokens,
+		TotalTokens:         total,
+		CachedInputTokens:   event.Data.CachedInputTokens,
+		CacheCreationTokens: event.Data.CacheCreationTokens,
+		ReasoningTokens:     event.Data.ReasoningTokens,
+		Source:              event.Source,
 	}
 
 	if err := h.store.InsertEvent(r.Context(), usageEvent); err != nil {

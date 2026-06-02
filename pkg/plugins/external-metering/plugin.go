@@ -123,8 +123,8 @@ func (p *ExternalMeteringPlugin) ProcessRequest(ctx context.Context, cycleState 
 		return nil
 	}
 
-	group := request.Headers[groupHeader]
 	subscription := request.Headers[subscriptionHeader]
+	group := subscription
 
 	model, _ := request.Body["model"].(string)
 
@@ -174,6 +174,29 @@ func (p *ExternalMeteringPlugin) ProcessResponse(ctx context.Context, cycleState
 
 	promptTokens, completionTokens, totalTokens := extractTokenCounts(usage)
 
+	// Extract detailed token breakdown
+	cachedInputTokens := 0
+	cacheCreationTokens := 0
+	reasoningTokens := 0
+
+	// Anthropic: cache_creation_input_tokens, cache_read_input_tokens
+	cachedInputTokens = toInt(usage["cache_read_input_tokens"])
+	cacheCreationTokens = toInt(usage["cache_creation_input_tokens"])
+
+	// OpenAI: input_tokens_details.cached_tokens, output_tokens_details.reasoning_tokens
+	if details, ok := usage["input_tokens_details"].(map[string]any); ok {
+		cachedInputTokens = toInt(details["cached_tokens"])
+	}
+	if details, ok := usage["output_tokens_details"].(map[string]any); ok {
+		reasoningTokens = toInt(details["reasoning_tokens"])
+	}
+
+	// For accurate total: include cache creation tokens for Anthropic
+	if cacheCreationTokens > 0 {
+		promptTokens += cacheCreationTokens
+		totalTokens = promptTokens + completionTokens
+	}
+
 	event := map[string]any{
 		"specversion":     "1.0",
 		"id":              fmt.Sprintf("evt-%s", uuid.New().String()),
@@ -183,14 +206,17 @@ func (p *ExternalMeteringPlugin) ProcessResponse(ctx context.Context, cycleState
 		"time":            time.Now().UTC().Format(time.RFC3339),
 		"datacontenttype": "application/json",
 		"data": map[string]any{
-			"user":              username,
-			"group":             group,
-			"subscription":      subscription,
-			"provider":          provider,
-			"model":             model,
-			"prompt_tokens":     promptTokens,
-			"completion_tokens": completionTokens,
-			"total_tokens":      totalTokens,
+			"user":                username,
+			"group":               group,
+			"subscription":        subscription,
+			"provider":            provider,
+			"model":               model,
+			"prompt_tokens":       promptTokens,
+			"completion_tokens":   completionTokens,
+			"total_tokens":        totalTokens,
+			"cached_input_tokens": cachedInputTokens,
+			"cache_creation_tokens": cacheCreationTokens,
+			"reasoning_tokens":    reasoningTokens,
 		},
 	}
 
