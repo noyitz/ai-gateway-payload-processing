@@ -138,19 +138,22 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 
 		request.SetBodyField("model", externalModelInfo.targetModel)
 		// Strip parameters that may not be supported by the target model
-		for _, unsupported := range []string{"effort", "thinking", "output_config"} {
+		for _, unsupported := range []string{"effort", "thinking", "output_config", "context_management"} {
 			if _, has := request.Body[unsupported]; has {
 				delete(request.Body, unsupported)
 				logger.Info("stripped unsupported body parameter for target model", "param", unsupported)
 			}
 		}
 		request.SetBody(request.Body)
-		// Strip effort beta flag from anthropic-beta header
+		// Strip beta flags incompatible with non-Opus models
 		if beta, ok := request.Headers["anthropic-beta"]; ok {
-			cleaned := stripBetaFlag(beta, "effort-")
+			cleaned := beta
+			for _, prefix := range []string{"effort-", "interleaved-thinking-", "redact-thinking-", "thinking-token-count-", "context-management-"} {
+				cleaned = stripBetaFlag(cleaned, prefix)
+			}
 			if cleaned != beta {
 				request.SetHeader("anthropic-beta", cleaned)
-				logger.Info("stripped effort beta flag from anthropic-beta header")
+				logger.Info("stripped incompatible beta flags from anthropic-beta header")
 			}
 		}
 	}
