@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	requesthandling "github.com/llm-d/llm-d-inference-payload-processor/pkg/framework/interface/requesthandling"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
 	errcommon "sigs.k8s.io/gateway-api-inference-extension/pkg/common/error"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/framework/interface/plugin"
@@ -33,6 +34,7 @@ const (
 
 // compile-time type validation
 var _ framework.ResponseProcessor = &NemoResponseGuardPlugin{}
+var _ requesthandling.ResponseBodyRequirement = &NemoResponseGuardPlugin{}
 
 // NemoResponseGuardPlugin calls a NeMo Guardrails service over HTTP to check model output
 // using output rails. It implements ResponseProcessor to inspect responses before returning
@@ -83,6 +85,12 @@ func (p *NemoResponseGuardPlugin) TypedName() plugin.TypedName {
 func (p *NemoResponseGuardPlugin) WithName(name string) *NemoResponseGuardPlugin {
 	p.typedName.Name = name
 	return p
+}
+
+// ResponseBodyMode returns BodyFull because NeMo guardrails need the complete response
+// body to inspect the full model output.
+func (p *NemoResponseGuardPlugin) ResponseBodyMode() requesthandling.ResponseBodyMode {
+	return requesthandling.BodyFull
 }
 
 // ProcessResponse calls NeMo Guardrails to evaluate output rails on the model response.

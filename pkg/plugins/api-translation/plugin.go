@@ -29,6 +29,7 @@ import (
 	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/common/observability/logging"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/framework/interface/plugin"
 
+	requesthandling "github.com/llm-d/llm-d-inference-payload-processor/pkg/framework/interface/requesthandling"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator/anthropic"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator/azure"
@@ -47,10 +48,12 @@ const (
 // compile-time type validation
 var _ framework.RequestProcessor = &APITranslationPlugin{}
 var _ framework.ResponseProcessor = &APITranslationPlugin{}
+var _ requesthandling.ResponseBodyRequirement = &APITranslationPlugin{}
 
 // apiTranslationConfig holds configuration for provider-specific translators.
 type apiTranslationConfig struct {
-	VertexOpenAI *vertexOpenAIConfig `json:"vertexOpenAI,omitempty"`
+	VertexOpenAI     *vertexOpenAIConfig `json:"vertexOpenAI,omitempty"`
+	ResponseBodyMode string              `json:"responseBodyMode,omitempty"`
 }
 
 type vertexOpenAIConfig struct {
@@ -73,6 +76,19 @@ func APITranslationFactory(name string, rawConfig json.RawMessage, handle framew
 		return nil, err
 	}
 	return p.WithName(name), nil
+}
+
+func parseResponseBodyMode(s string) (requesthandling.ResponseBodyMode, error) {
+	switch strings.ToLower(s) {
+	case "", "full":
+		return requesthandling.BodyFull, nil
+	case "chunked":
+		return requesthandling.BodyChunked, nil
+	case "none":
+		return requesthandling.BodyNotNeeded, nil
+	default:
+		return 0, fmt.Errorf("invalid responseBodyMode %q (valid: none, chunked, full)", s)
+	}
 }
 
 // NewAPITranslationPlugin creates a new plugin instance with the given config.
@@ -100,27 +116,34 @@ func NewAPITranslationPlugin(ctx context.Context, config apiTranslationConfig) (
 		)
 	}
 
+	bodyMode, err := parseResponseBodyMode(config.ResponseBodyMode)
+	if err != nil {
+		return nil, err
+	}
+
 	keys := make([]string, 0, len(providers))
 	for key := range providers {
 		keys = append(keys, key)
 	}
 
-	log.FromContext(ctx).V(logutil.VERBOSE).Info("plugin initialized", "providers", strings.Join(keys, ","))
+	log.FromContext(ctx).V(logutil.VERBOSE).Info("plugin initialized", "providers", strings.Join(keys, ","), "responseBodyMode", bodyMode)
 
 	return &APITranslationPlugin{
 		typedName: plugin.TypedName{
 			Type: APITranslationPluginType,
 			Name: APITranslationPluginType,
 		},
-		providers: providers,
+		providers:        providers,
+		responseBodyMode: bodyMode,
 	}, nil
 }
 
 // APITranslationPlugin translates inference API requests and responses between
 // OpenAI Chat Completions format and provider-native formats (e.g., Anthropic Messages API).
 type APITranslationPlugin struct {
-	typedName plugin.TypedName
-	providers map[string]translator.Translator // map from provider name to translator interface
+	typedName        plugin.TypedName
+	providers        map[string]translator.Translator // map from provider name to translator interface
+	responseBodyMode requesthandling.ResponseBodyMode
 }
 
 // TypedName returns the type and name tuple of this plugin instance.
@@ -132,6 +155,12 @@ func (p *APITranslationPlugin) TypedName() plugin.TypedName {
 func (p *APITranslationPlugin) WithName(name string) *APITranslationPlugin {
 	p.typedName.Name = name
 	return p
+}
+
+// ResponseBodyMode returns the configured response body mode for this plugin.
+// Defaults to BodyFull. Configurable via the "responseBodyMode" parameter.
+func (p *APITranslationPlugin) ResponseBodyMode() requesthandling.ResponseBodyMode {
+	return p.responseBodyMode
 }
 
 // ProcessRequest reads the provider from CycleState (set by an upstream plugin) and translates
