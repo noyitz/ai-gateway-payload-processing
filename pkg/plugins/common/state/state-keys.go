@@ -28,4 +28,11 @@ const (
 	InputAPIFormatKey = "input-api-format"
 	EndpointKey       = "endpoint"
 	PathKey           = "path"
+
+	// Metering CycleState keys
+	MeteringUsernameKey     = "metering-username"
+	MeteringGroupKey        = "metering-group"
+	MeteringSubscriptionKey = "metering-subscription"
+	MeteringModelKey        = "metering-model"
+	MeteringRequestTimeKey  = "metering-request-time"
 )
