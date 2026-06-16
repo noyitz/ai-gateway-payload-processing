@@ -147,32 +147,27 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 	log.FromContext(ctx).V(logutil.VERBOSE).Info("received incoming request", "path", request.Headers[":path"])
 	relativePath := sanitizePath(request.Headers[":path"])
 
-	segments := strings.Split(relativePath, "/")
-	if len(segments) < 2 || segments[0] == "" || segments[1] == "" {
-		log.FromContext(ctx).V(logutil.VERBOSE).Info("wasn't able to parse namespaced name from path", "path", relativePath)
-		return nil
+	// Resolve model name: prefer X-Gateway-Model-Name header (set by body-field-to-header plugin),
+	// fall back to request body model field.
+	modelName := request.Headers["x-gateway-model-name"]
+	if modelName == "" {
+		modelName = model
 	}
 
-	modelKey := types.NamespacedName{Namespace: segments[0], Name: segments[1]}
-	log.FromContext(ctx).V(logutil.VERBOSE).Info("exported namespaced name from path", "key", modelKey)
-
-	modelInfo, found := p.store.getModel(modelKey)
+	modelInfo, modelKey, found := p.store.getModelByName(modelName)
 	if !found {
 		return nil // not an external model — pass through for internal models
 	}
 
+	logger.Info("resolved model by name", "modelName", modelName, "key", modelKey.String())
+
 	inputFormat := detectInputAPIFormat(relativePath)
 	if inputFormat == "" {
 		logger.Error(nil, "unsupported API path for external model", "model", modelKey.String(), "path", relativePath)
-		return errcommon.Error{Code: errcommon.BadRequest, Msg: fmt.Sprintf("unsupported API path: %s", relativePath)}
+		return errcommon.Error{Code: errcommon.BadRequest, Msg: "unsupported API endpoint"}
 	}
 
 	ref := selectByWeight(modelInfo.refs)
-
-	if ref.targetModel != model {
-		logger.Error(nil, "model mismatch between request body and ExternalModel", "requestModel", model, "externalModel", ref.targetModel)
-		return errcommon.Error{Code: errcommon.NotFound, Msg: fmt.Sprintf("model in request body '%s' doesn't match ExternalModel", model)}
-	}
 
 	cycleState.Write(state.ProviderKey, ref.provider)
 	cycleState.Write(state.ModelKey, ref.targetModel)
