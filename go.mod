@@ -13,13 +13,13 @@ require (
 	k8s.io/kubectl v0.35.5
 	sigs.k8s.io/controller-runtime v0.23.3
 	sigs.k8s.io/gateway-api v1.5.1
+	sigs.k8s.io/gateway-api-inference-extension v1.5.0
 )
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
-	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/moby/spdystream v0.5.1 // indirect
@@ -125,4 +125,4 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace github.com/llm-d/llm-d-inference-payload-processor => ../llm-d-inference-payload-processor
+replace github.com/llm-d/llm-d-inference-payload-processor => github.com/noyitz/llm-d-inference-payload-processor v0.0.0-20260616213505-bf93834c3cf2

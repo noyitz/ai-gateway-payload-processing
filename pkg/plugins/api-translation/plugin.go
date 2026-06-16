@@ -47,10 +47,12 @@ const (
 // compile-time type validation
 var _ requesthandling.RequestProcessor = &APITranslationPlugin{}
 var _ requesthandling.ResponseProcessor = &APITranslationPlugin{}
+var _ requesthandling.ResponseBodyRequirement = &APITranslationPlugin{}
 
 // apiTranslationConfig holds configuration for provider-specific translators.
 type apiTranslationConfig struct {
-	VertexOpenAI *vertexOpenAIConfig `json:"vertexOpenAI,omitempty"`
+	VertexOpenAI     *vertexOpenAIConfig `json:"vertexOpenAI,omitempty"`
+	BodyProcessingMode string              `json:"responseBodyMode,omitempty"`
 }
 
 type vertexOpenAIConfig struct {
@@ -100,27 +102,34 @@ func NewAPITranslationPlugin(ctx context.Context, config apiTranslationConfig) (
 		)
 	}
 
+	bodyMode, err := parseBodyProcessingMode(config.BodyProcessingMode)
+	if err != nil {
+		return nil, err
+	}
+
 	keys := make([]string, 0, len(providers))
 	for key := range providers {
 		keys = append(keys, key)
 	}
 
-	log.FromContext(ctx).V(logutil.VERBOSE).Info("plugin initialized", "providers", strings.Join(keys, ","))
+	log.FromContext(ctx).V(logutil.VERBOSE).Info("plugin initialized", "providers", strings.Join(keys, ","), "responseBodyMode", bodyMode)
 
 	return &APITranslationPlugin{
 		typedName: plugin.TypedName{
 			Type: APITranslationPluginType,
 			Name: APITranslationPluginType,
 		},
-		providers: providers,
+		providers:        providers,
+		responseBodyMode: bodyMode,
 	}, nil
 }
 
 // APITranslationPlugin translates inference API requests and responses between
 // OpenAI Chat Completions format and provider-native formats (e.g., Anthropic Messages API).
 type APITranslationPlugin struct {
-	typedName plugin.TypedName
-	providers map[string]translator.Translator // map from provider name to translator interface
+	typedName        plugin.TypedName
+	providers        map[string]translator.Translator // map from provider name to translator interface
+	responseBodyMode requesthandling.BodyProcessingMode
 }
 
 // TypedName returns the type and name tuple of this plugin instance.
@@ -132,6 +141,25 @@ func (p *APITranslationPlugin) TypedName() plugin.TypedName {
 func (p *APITranslationPlugin) WithName(name string) *APITranslationPlugin {
 	p.typedName.Name = name
 	return p
+}
+
+// BodyProcessingMode returns the configured response body mode.
+// Defaults to Full. Configurable via the "responseBodyMode" parameter.
+func (p *APITranslationPlugin) BodyProcessingMode() requesthandling.BodyProcessingMode {
+	return p.responseBodyMode
+}
+
+func parseBodyProcessingMode(s string) (requesthandling.BodyProcessingMode, error) {
+	switch strings.ToLower(s) {
+	case "", "full":
+		return requesthandling.Full, nil
+	case "chunked":
+		return requesthandling.Chunks, nil
+	case "none":
+		return requesthandling.Skip, nil
+	default:
+		return 0, fmt.Errorf("invalid responseBodyMode %q (valid: none, chunked, full)", s)
+	}
 }
 
 // ProcessRequest reads the provider from CycleState (set by an upstream plugin) and translates

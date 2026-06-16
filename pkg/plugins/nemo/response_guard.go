@@ -33,6 +33,7 @@ const (
 
 // compile-time type validation
 var _ requesthandling.ResponseProcessor = &NemoResponseGuardPlugin{}
+var _ requesthandling.ResponseBodyRequirement = &NemoResponseGuardPlugin{}
 
 // NemoResponseGuardPlugin calls a NeMo Guardrails service over HTTP to check model output
 // using output rails. It implements ResponseProcessor to inspect responses before returning
@@ -83,6 +84,12 @@ func (p *NemoResponseGuardPlugin) TypedName() plugin.TypedName {
 func (p *NemoResponseGuardPlugin) WithName(name string) *NemoResponseGuardPlugin {
 	p.typedName.Name = name
 	return p
+}
+
+// BodyProcessingMode returns Full because NeMo guardrails need the complete response
+// body to inspect the full model output.
+func (p *NemoResponseGuardPlugin) BodyProcessingMode() requesthandling.BodyProcessingMode {
+	return requesthandling.Full
 }
 
 // ProcessResponse calls NeMo Guardrails to evaluate output rails on the model response.
