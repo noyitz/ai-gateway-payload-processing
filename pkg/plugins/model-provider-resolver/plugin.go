@@ -176,11 +176,11 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 // detectInputAPIFormat determines the client's API format from the request path suffix.
 func detectInputAPIFormat(path string) apiformat.APIFormat {
 	switch {
-	case strings.HasSuffix(path, "/v1/chat/completions"):
+	case strings.HasSuffix(path, "/v1/chat/completions"), path == "v1/chat/completions":
 		return apiformat.OpenAIChatCompletions
-	case strings.HasSuffix(path, "/v1/messages"):
+	case strings.HasSuffix(path, "/v1/messages"), path == "v1/messages":
 		return apiformat.Messages
-	case strings.HasSuffix(path, "/v1/responses"):
+	case strings.HasSuffix(path, "/v1/responses"), path == "v1/responses":
 		return apiformat.OpenAIResponses
 	default:
 		return ""
