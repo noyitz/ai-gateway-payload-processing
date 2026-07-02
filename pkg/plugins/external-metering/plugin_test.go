@@ -168,7 +168,7 @@ func TestProcessRequest_MissingUsername(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestProcessRequest_StreamingInjectsUsageOption(t *testing.T) {
+func TestProcessRequest_StreamingDoesNotInjectUsageOption(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"hasAccess":true,"balance":9000,"usage":1000,"overage":0}`))
@@ -182,11 +182,9 @@ func TestProcessRequest_StreamingInjectsUsageOption(t *testing.T) {
 	err := p.ProcessRequest(context.Background(), cs, req)
 	require.NoError(t, err)
 
-	streamOpts, exists := req.Body["stream_options"]
-	require.True(t, exists)
-	opts, ok := streamOpts.(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, true, opts["include_usage"])
+	// stream_options injection is handled by stream-usage-enforcer plugin, not metering
+	_, exists := req.Body["stream_options"]
+	assert.False(t, exists)
 }
 
 func TestProcessRequest_NonStreamingNoUsageOption(t *testing.T) {

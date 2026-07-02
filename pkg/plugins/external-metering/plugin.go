@@ -384,6 +384,12 @@ func extractUsageFromChunk(chunk string) map[string]any {
 				return usage
 			}
 		}
+		// OpenAI Responses API: usage nested in response.completed event
+		if resp, ok := parsed["response"].(map[string]any); ok {
+			if usage, ok := resp["usage"].(map[string]any); ok {
+				return usage
+			}
+		}
 	}
 	return nil
 }
