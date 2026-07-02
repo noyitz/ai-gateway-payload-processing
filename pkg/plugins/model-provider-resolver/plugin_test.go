@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/types"
 	"github.com/llm-d/llm-d-inference-payload-processor/pkg/framework/interface/requesthandling"
 	"github.com/llm-d/llm-d-inference-payload-processor/pkg/framework/interface/plugin"
 
@@ -40,8 +39,7 @@ func TestProcessRequest_ModelResolved(t *testing.T) {
 		credName    = "anthropic-key"
 		endpoint    = "api.anthropic.com"
 	)
-	store.addOrUpdateModel(
-		types.NamespacedName{Namespace: extNS, Name: extName},
+	store.addOrUpdateModel(extName,
 		&externalModelInfo{modelName: extName, refs: []*resolvedProviderRef{{
 			provider:        provider.Anthropic,
 			targetModel:     targetModel,
@@ -103,8 +101,7 @@ func TestProcessRequest_PathWrittenToCycleState(t *testing.T) {
 		endpoint    = "maas.cluster-b.example.com"
 		path        = "/maas-default-gateway/v1/chat/completions"
 	)
-	store.addOrUpdateModel(
-		types.NamespacedName{Namespace: extNS, Name: extName},
+	store.addOrUpdateModel(extName,
 		&externalModelInfo{modelName: extName, refs: []*resolvedProviderRef{{
 			provider:        provider.OpenAI,
 			targetModel:     targetModel,
@@ -135,8 +132,7 @@ func TestProcessRequest_PathWrittenToCycleState(t *testing.T) {
 
 func TestProcessRequest_UnknownModelPassesThrough(t *testing.T) {
 	store := newInfoStore()
-	store.addOrUpdateModel(
-		types.NamespacedName{Namespace: "llm", Name: "gpt4"},
+	store.addOrUpdateModel("gpt4",
 		&externalModelInfo{modelName: "gpt4", refs: []*resolvedProviderRef{{
 			provider: provider.OpenAI, targetModel: "gpt-4o",
 			apiFormat: apiformat.OpenAIChatCompletions,
@@ -188,8 +184,7 @@ func TestProcessRequest_NoModel(t *testing.T) {
 
 func TestProcessRequest_BadPath(t *testing.T) {
 	store := newInfoStore()
-	store.addOrUpdateModel(
-		types.NamespacedName{Namespace: "llm", Name: "ext"},
+	store.addOrUpdateModel("ext",
 		&externalModelInfo{modelName: "ext", refs: []*resolvedProviderRef{{
 			provider: provider.OpenAI, targetModel: "gpt-4o",
 			secretName: "k", secretNamespace: "llm",
@@ -253,8 +248,7 @@ func TestSelectByWeight_EqualWeights(t *testing.T) {
 
 func TestProcessRequest_AnthropicMessages(t *testing.T) {
 	store := newInfoStore()
-	store.addOrUpdateModel(
-		types.NamespacedName{Namespace: "llm", Name: "claude"},
+	store.addOrUpdateModel("claude",
 		&externalModelInfo{modelName: "claude", refs: []*resolvedProviderRef{{
 			provider: provider.Anthropic, targetModel: "claude-opus-4-6",
 			apiFormat: "messages", secretName: "key", secretNamespace: "llm",
@@ -282,8 +276,7 @@ func TestProcessRequest_AnthropicMessages(t *testing.T) {
 
 func TestProcessRequest_OpenAIResponses(t *testing.T) {
 	store := newInfoStore()
-	store.addOrUpdateModel(
-		types.NamespacedName{Namespace: "llm", Name: "gpt"},
+	store.addOrUpdateModel("gpt",
 		&externalModelInfo{modelName: "gpt", refs: []*resolvedProviderRef{{
 			provider: provider.OpenAI, targetModel: "gpt-5.5",
 			apiFormat: "openai-chat", secretName: "key", secretNamespace: "llm",
@@ -307,8 +300,7 @@ func TestProcessRequest_OpenAIResponses(t *testing.T) {
 
 func TestProcessRequest_UnsupportedPath(t *testing.T) {
 	store := newInfoStore()
-	store.addOrUpdateModel(
-		types.NamespacedName{Namespace: "llm", Name: "model"},
+	store.addOrUpdateModel("model",
 		&externalModelInfo{modelName: "model", refs: []*resolvedProviderRef{{
 			provider: provider.OpenAI, targetModel: "gpt-4o",
 			apiFormat: "openai-chat", secretName: "key", secretNamespace: "llm",

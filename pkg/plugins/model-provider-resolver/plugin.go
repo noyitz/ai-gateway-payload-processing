@@ -143,16 +143,16 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 		modelName = model
 	}
 
-	modelInfo, modelKey, found := p.store.getModelByName(modelName)
+	modelInfo, found := p.store.getModelByName(modelName)
 	if !found {
 		return nil // not an external model — pass through for internal models
 	}
 
-	logger.Info("resolved model by name", "modelName", modelName, "key", modelKey.String())
+	logger.Info("resolved model by name", "modelName", modelName)
 
 	inputFormat := detectInputAPIFormat(relativePath)
 	if inputFormat == "" {
-		logger.Error(nil, "unsupported API path for external model", "model", modelKey.String(), "path", relativePath)
+		logger.Error(nil, "unsupported API path for external model", "model", modelName, "path", relativePath)
 		return errcommon.Error{Code: errcommon.BadRequest, Msg: "unsupported API endpoint"}
 	}
 
@@ -169,18 +169,18 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 	cycleState.Write(state.ModelConfigKey, ref.config)
 	cycleState.Write(state.InputAPIFormatKey, inputFormat)
 
-	logger.Info("external model resolved", "model", modelKey.String(), "provider", ref.provider, "inputFormat", inputFormat, "apiFormat", ref.apiFormat)
+	logger.Info("external model resolved", "model", modelName, "provider", ref.provider, "inputFormat", inputFormat, "apiFormat", ref.apiFormat)
 	return nil
 }
 
 // detectInputAPIFormat determines the client's API format from the request path suffix.
 func detectInputAPIFormat(path string) apiformat.APIFormat {
 	switch {
-	case strings.HasSuffix(path, "/v1/chat/completions"), path == "v1/chat/completions":
+	case strings.HasSuffix(path, "/v1/chat/completions"):
 		return apiformat.OpenAIChatCompletions
-	case strings.HasSuffix(path, "/v1/messages"), path == "v1/messages":
+	case strings.HasSuffix(path, "/v1/messages"):
 		return apiformat.Messages
-	case strings.HasSuffix(path, "/v1/responses"), path == "v1/responses":
+	case strings.HasSuffix(path, "/v1/responses"):
 		return apiformat.OpenAIResponses
 	default:
 		return ""
