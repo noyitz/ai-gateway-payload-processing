@@ -16,13 +16,13 @@ The system routes AI inference requests through an Envoy gateway with ext_proc p
 ```
 Client (Claude Code / Codex / curl)
   → Envoy Gateway (Istio, HTTPRoute)
-    → Kuadrant Auth (API key validation via Authorino)
-    → Pre-auth ext_proc (extracts model name from body → X-Gateway-Model-Name header)
-    → Post-auth ext_proc (IPP plugin chain):
-        → body-field-to-header (model name extraction)
-        → maas-headers-guard (captures + strips x-maas-* headers)
-        → external-metering (balance check + usage reporting)
-        → model-provider-resolver (resolves model → provider from ExternalModel CRDs)
+    → Kuadrant Auth (API key validation via Authorino → injects X-MaaS-Username/Group)
+    → ext_proc (IPP plugin chain):
+        → body-field-to-header (model name extraction → X-Gateway-Model-Name)
+        → maas-headers-guard (captures + strips x-maas-* headers from CycleState)
+        → external-metering (balance check on request, usage reporting on response chunks)
+        → model-provider-resolver (resolves model name → provider from ExternalModel CRDs)
+        → stream-usage-enforcer (injects stream_options.include_usage for OpenAI)
         → api-translation (format conversion between OpenAI/Anthropic/Azure/Bedrock/Vertex)
         → apikey-injection (swaps MaaS key for provider API key from K8s secret)
     → External Provider (api.anthropic.com, api.openai.com, etc.)
@@ -72,50 +72,33 @@ These PRs contain features not yet merged into main. Cherry-pick or apply them:
 
 ### Build approach:
 
-The simplest way is to use the combined-build repo that merges everything:
+Clone the repo and checkout the branch with all plugins (body-name resolver + streaming metering):
 
 ```bash
-git clone https://github.com/noyitz/ai-gateway-payload-processing.git combined-build
-cd combined-build
-git checkout combined-deploy-v2
+git clone https://github.com/noyitz/ai-gateway-payload-processing.git
+cd ai-gateway-payload-processing
+git checkout feat/external-metering-chunk-processor
 ```
 
-This branch has all plugins pre-integrated. It uses a local `replace` directive in `go.mod` for the framework, so you need to:
+This branch uses framework `v0.1.0-rc.3` (no local replace needed). Build and push:
 
-1. Clone the framework with PR #169:
-   ```bash
-   git clone https://github.com/noyitz/llm-d-inference-payload-processor.git
-   cd llm-d-inference-payload-processor
-   git checkout feat/response-body-mode-framework
-   cd ..
-   ```
+```bash
+# Login to cluster registry
+REGISTRY="default-route-openshift-image-registry.apps.<YOUR_CLUSTER_DOMAIN>"
+oc whoami -t | docker login $REGISTRY -u $(oc whoami) --password-stdin
 
-2. Update `go.mod` replace directive to point to your local framework path:
-   ```bash
-   cd combined-build
-   go mod edit -replace github.com/llm-d/llm-d-inference-payload-processor=../llm-d-inference-payload-processor
-   go mod vendor
-   ```
+# Build for linux/amd64
+docker build --platform linux/amd64 --no-cache --provenance=false \
+  --build-arg CGO_ENABLED=0 \
+  -t ${REGISTRY}/openshift-ingress/payload-processing:latest .
 
-3. Build and push the image:
-   ```bash
-   # Login to cluster registry
-   REGISTRY="default-route-openshift-image-registry.apps.<YOUR_CLUSTER_DOMAIN>"
-   oc whoami -t | docker login $REGISTRY -u $(oc whoami) --password-stdin
+docker push ${REGISTRY}/openshift-ingress/payload-processing:latest
 
-   # Build for linux/amd64
-   docker build --platform linux/amd64 --no-cache --provenance=false \
-     --build-arg CGO_ENABLED=0 \
-     -t ${REGISTRY}/openshift-ingress/payload-processing-test:latest .
-
-   docker push ${REGISTRY}/openshift-ingress/payload-processing-test:latest
-   ```
-
-4. Deploy the custom image:
-   ```bash
-   oc set image deploy/payload-processing -n openshift-ingress \
-     payload-processing=image-registry.openshift-image-registry.svc:5000/openshift-ingress/payload-processing-test:latest
-   ```
+# Deploy
+oc set image deploy/payload-processing -n openshift-ingress \
+  payload-processing=image-registry.openshift-image-registry.svc:5000/openshift-ingress/payload-processing:latest
+oc rollout restart deploy/payload-processing -n openshift-ingress
+```
 
 ## Step 3: Set Environment Variables on IPP
 
