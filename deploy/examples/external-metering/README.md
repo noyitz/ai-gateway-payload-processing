@@ -49,7 +49,7 @@ helm upgrade ai-gateway <chart> -f values-with-metering.yaml
 - type: external-metering
   name: external-metering
   json:
-    meteringURL: "http://openmeter.metering.svc:8080"
+    meteringURL: "https://openmeter.metering.svc:8443"
     timeoutSeconds: 5
     featureKey: "inference-tokens"
     source: "maas-gateway"
@@ -86,9 +86,9 @@ The plugin emits events in [CloudEvents v1.0](https://cloudevents.io) format:
     "prompt_tokens": 150,
     "completion_tokens": 80,
     "total_tokens": 230,
-    "cached_input_tokens": 12000,
-    "cache_creation_tokens": 100,
-    "reasoning_tokens": 0,
+    "cached_input_tokens": 12000,   // 0 when provider does not report
+    "cache_creation_tokens": 100,   // 0 when provider does not report
+    "reasoning_tokens": 0,          // 0 when provider does not report
     "duration_ms": 1200
   }
 }

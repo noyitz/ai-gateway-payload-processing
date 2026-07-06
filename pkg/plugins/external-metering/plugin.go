@@ -148,7 +148,10 @@ func (b *meteringBase) processRequest(ctx context.Context, cycleState *plugin.Cy
 		group = subscription
 	}
 
-	model, _ := request.Body["model"].(string)
+	model, _ := plugin.ReadCycleStateKey[string](cycleState, state.ModelKey)
+	if model == "" {
+		model, _ = request.Body["model"].(string)
+	}
 
 	cycleState.Write(state.MeteringUsernameKey, username)
 	cycleState.Write(state.MeteringGroupKey, group)
@@ -162,7 +165,8 @@ func (b *meteringBase) processRequest(ctx context.Context, cycleState *plugin.Cy
 			logger.Error(err, "metering balance check failed (fail-open), allowing request")
 			return nil
 		}
-		return errcommon.Error{Code: errcommon.ServiceUnavailable, Msg: fmt.Sprintf("metering system unavailable: %v", err)}
+		logger.Error(err, "metering balance check failed (fail-closed)")
+		return errcommon.Error{Code: errcommon.ServiceUnavailable, Msg: "metering system unavailable"}
 	}
 
 	if !result.HasAccess {
@@ -170,7 +174,7 @@ func (b *meteringBase) processRequest(ctx context.Context, cycleState *plugin.Cy
 		return errcommon.Error{Code: errcommon.ResourceExhausted, Msg: "token budget exhausted"}
 	}
 
-	logger.V(logutil.VERBOSE).Info("metering check passed", "customer", username, "balance", result.Balance)
+	logger.V(logutil.VERBOSE).Info("metering check passed", "balance", result.Balance)
 
 	// Strip Accept-Encoding so the upstream sends uncompressed SSE responses.
 	// The chunk processor needs plain text to extract usage data from streaming responses.
@@ -251,7 +255,7 @@ func (b *meteringBase) reportUsageEvent(ctx context.Context, cycleState *plugin.
 	if reportErr := b.client.reportUsage(ctx, eventJSON); reportErr != nil {
 		logger.Error(reportErr, "failed to report usage to metering system")
 	} else {
-		logger.V(logutil.VERBOSE).Info("usage reported", "customer", username, "model", model, "tokens", totalTokens)
+		logger.V(logutil.VERBOSE).Info("usage reported", "model", model, "tokens", totalTokens)
 	}
 }
 
@@ -337,16 +341,12 @@ func (p *ExternalMeteringStreamingPlugin) ProcessResponseChunk(ctx context.Conte
 		return nil
 	}
 
-	preview := chunk
-	if len(preview) > 300 {
-		preview = preview[:300] + "..."
-	}
-	logger.Info("chunk received", "length", len(chunk), "isFinal", isFinal, "preview", preview)
+	logger.V(logutil.VERBOSE).Info("chunk received", "length", len(chunk), "isFinal", isFinal)
 
 	if chunk != "" {
 		usage := extractUsageFromChunk(chunk)
 		if usage != nil {
-			logger.Info("usage found in chunk", "usage", usage)
+			logger.V(logutil.VERBOSE).Info("usage found in chunk")
 			cycleState.Write(state.MeteringLastUsageKey, usage)
 		}
 	}

@@ -98,7 +98,7 @@ func (c *meteringClient) reportUsage(ctx context.Context, event []byte) error {
 		return fmt.Errorf("usage report call failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("usage report returned status %d", resp.StatusCode)
