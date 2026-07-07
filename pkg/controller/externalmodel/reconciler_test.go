@@ -130,7 +130,7 @@ func createExternalProvider(t *testing.T, name, namespace, endpoint string) {
 			Provider: "openai",
 			Endpoint: endpoint,
 			Auth: inferencev1alpha1.AuthConfig{
-				Type:      "simple",
+				Type:      "apikey",
 				SecretRef: inferencev1alpha1.NameReference{Name: "dummy-secret"},
 			},
 		},
@@ -229,6 +229,33 @@ func TestReconcile_MissingProvider(t *testing.T) {
 	require.Len(t, model.Status.Conditions, 1)
 	assert.Equal(t, "ReconcileFailed", model.Status.Conditions[0].Reason)
 	assert.Contains(t, model.Status.Conditions[0].Message, "nonexistent")
+}
+
+func TestReconcile_UnresolvedPathPlaceholder(t *testing.T) {
+	ns := createTestNamespace(t)
+	createExternalProvider(t, "my-vertex", ns, "us-central1-aiplatform.googleapis.com")
+
+	model := &inferencev1alpha1.ExternalModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "bad-path", Namespace: ns},
+		Spec: inferencev1alpha1.ExternalModelSpec{
+			ExternalProviderRefs: []inferencev1alpha1.ExternalProviderRef{
+				{
+					Ref:         inferencev1alpha1.NameReference{Name: "my-vertex"},
+					TargetModel: "gemini-pro",
+					APIFormat:   "openai-chat",
+					Path:        "/v1/projects/{project}/locations/{location}/chat/completions",
+				},
+			},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, model))
+
+	waitForModelPhase(t, "bad-path", ns, "Failed")
+
+	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "bad-path", Namespace: ns}, model))
+	require.Len(t, model.Status.Conditions, 1)
+	assert.Equal(t, "ReconcileFailed", model.Status.Conditions[0].Reason)
+	assert.Contains(t, model.Status.Conditions[0].Message, "unresolved placeholders")
 }
 
 func TestReconcile_ProviderEndpointUpdate(t *testing.T) {
