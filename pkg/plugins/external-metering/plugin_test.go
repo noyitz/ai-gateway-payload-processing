@@ -489,3 +489,165 @@ func newTestResponse(prompt, completion, total int) *requesthandling.InferenceRe
 	}
 	return resp
 }
+
+// --- splitSSELines Tests ---
+
+func TestSplitSSELines(t *testing.T) {
+	tests := []struct {
+		name  string
+		chunk string
+		want  []string
+	}{
+		{"data prefix", "data: {\"type\":\"message\"}\n\n", []string{`{"type":"message"}`}},
+		{"raw JSON", "{\"usage\":{\"input_tokens\":10}}", []string{`{"usage":{"input_tokens":10}}`}},
+		{"data: [DONE]", "data: [DONE]\n\n", []string{"[DONE]"}},
+		{"multi-line", "data: {\"a\":1}\n\ndata: {\"b\":2}\n\n", []string{`{"a":1}`, `{"b":2}`}},
+		{"empty lines ignored", "\n\ndata: {\"c\":3}\n\n\n", []string{`{"c":3}`}},
+		{"no data", "event: ping\n\n", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitSSELines(tt.chunk)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// --- extractUsageFromChunk Tests ---
+
+func TestExtractUsageFromChunk(t *testing.T) {
+	tests := []struct {
+		name    string
+		chunk   string
+		wantKey string // key to check in returned usage map, "" means expect nil
+	}{
+		{
+			"OpenAI usage in top-level",
+			`data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
+			"prompt_tokens",
+		},
+		{
+			"Anthropic usage in message",
+			`data: {"type":"message_delta","delta":{},"usage":{"input_tokens":100,"output_tokens":50}}`,
+			"input_tokens",
+		},
+		{
+			"Anthropic message.usage",
+			`{"message":{"usage":{"input_tokens":200}}}`,
+			"input_tokens",
+		},
+		{
+			"OpenAI Responses API response.usage",
+			`data: {"type":"response.completed","response":{"usage":{"input_tokens":300,"output_tokens":100}}}`,
+			"input_tokens",
+		},
+		{
+			"delta.usage",
+			`data: {"delta":{"usage":{"prompt_tokens":50}}}`,
+			"prompt_tokens",
+		},
+		{
+			"no usage",
+			`data: {"type":"content_block_delta","delta":{"text":"hello"}}`,
+			"",
+		},
+		{
+			"data: [DONE]",
+			"data: [DONE]\n\n",
+			"",
+		},
+		{
+			"empty chunk",
+			"",
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractUsageFromChunk(tt.chunk)
+			if tt.wantKey == "" {
+				assert.Nil(t, got)
+			} else {
+				require.NotNil(t, got, "expected usage map")
+				assert.Contains(t, got, tt.wantKey)
+			}
+		})
+	}
+}
+
+// --- ProcessResponseChunk Tests ---
+
+func TestProcessResponseChunk_UsageInFinalChunk(t *testing.T) {
+	var reported sync.WaitGroup
+	reported.Add(1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			reported.Done()
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	raw := json.RawMessage(`{"meteringURL":"` + srv.URL + `","failOpen":true}`)
+	p, err := ExternalMeteringStreamingFactory("metering", raw, nil)
+	require.NoError(t, err)
+	sp := p.(*ExternalMeteringStreamingPlugin)
+
+	cs := plugin.NewCycleState()
+	cs.Write(state.MeteringUsernameKey, "alice")
+	cs.Write(state.MeteringGroupKey, "ai-eng")
+	cs.Write(state.MeteringSubscriptionKey, "ai-eng")
+	cs.Write(state.MeteringModelKey, "claude-opus-4-8")
+	resp := requesthandling.NewInferenceResponse()
+
+	// Non-final chunk with no usage
+	err = sp.ProcessResponseChunk(context.Background(), cs, resp, `data: {"type":"content_block_delta","delta":{"text":"hi"}}`, false)
+	assert.NoError(t, err)
+
+	// Final chunk with usage
+	err = sp.ProcessResponseChunk(context.Background(), cs, resp,
+		`data: {"type":"message_delta","usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150}}`, true)
+	assert.NoError(t, err)
+
+	reported.Wait()
+}
+
+func TestProcessResponseChunk_NoUsageData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	raw := json.RawMessage(`{"meteringURL":"` + srv.URL + `","failOpen":true}`)
+	p, err := ExternalMeteringStreamingFactory("metering", raw, nil)
+	require.NoError(t, err)
+	sp := p.(*ExternalMeteringStreamingPlugin)
+
+	cs := plugin.NewCycleState()
+	cs.Write(state.MeteringUsernameKey, "alice")
+	resp := requesthandling.NewInferenceResponse()
+
+	// Final chunk with no usage — should not error
+	err = sp.ProcessResponseChunk(context.Background(), cs, resp, "", true)
+	assert.NoError(t, err)
+}
+
+func TestProcessResponseChunk_MissingUsername(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	raw := json.RawMessage(`{"meteringURL":"` + srv.URL + `","failOpen":true}`)
+	p, err := ExternalMeteringStreamingFactory("metering", raw, nil)
+	require.NoError(t, err)
+	sp := p.(*ExternalMeteringStreamingPlugin)
+
+	cs := plugin.NewCycleState()
+	resp := requesthandling.NewInferenceResponse()
+
+	// No username in CycleState — should skip
+	err = sp.ProcessResponseChunk(context.Background(), cs, resp,
+		`data: {"usage":{"input_tokens":10,"output_tokens":5}}`, true)
+	assert.NoError(t, err)
+}
