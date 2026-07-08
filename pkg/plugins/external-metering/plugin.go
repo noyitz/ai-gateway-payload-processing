@@ -129,10 +129,7 @@ func (b *meteringBase) processRequest(ctx context.Context, cycleState *plugin.Cy
 		username = request.Headers["x-maas-username"]
 	}
 	if username == "" {
-		username = request.Headers["x-maas-subscription"]
-	}
-	if username == "" {
-		logger.V(logutil.VERBOSE).Info("no username or subscription header found, skipping metering")
+		logger.V(logutil.VERBOSE).Info("no username header found, skipping metering")
 		return nil
 	}
 

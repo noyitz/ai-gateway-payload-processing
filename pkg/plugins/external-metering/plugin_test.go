@@ -491,3 +491,66 @@ func newTestResponse(prompt, completion, total int) *requesthandling.InferenceRe
 	}
 	return resp
 }
+
+// --- Streaming Factory Tests ---
+
+func TestStreamingFactory_ValidConfig(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	raw := json.RawMessage(`{"meteringURL":"` + srv.URL + `","timeoutSeconds":3}`)
+	p, err := ExternalMeteringStreamingFactory("metering", raw, nil)
+	require.NoError(t, err)
+	assert.Equal(t, ExternalMeteringStreamingPluginType, p.(*ExternalMeteringStreamingPlugin).TypedName().Type)
+	assert.Equal(t, "metering", p.(*ExternalMeteringStreamingPlugin).TypedName().Name)
+}
+
+func TestStreamingFactory_MissingURL(t *testing.T) {
+	raw := json.RawMessage(`{}`)
+	_, err := ExternalMeteringStreamingFactory("metering", raw, nil)
+	assert.Error(t, err)
+}
+
+func TestStreamingProcessRequest_BalanceAllowed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"hasAccess":true,"balance":1000}`))
+	}))
+	defer srv.Close()
+
+	raw := json.RawMessage(`{"meteringURL":"` + srv.URL + `","failOpen":true}`)
+	p, err := ExternalMeteringStreamingFactory("metering", raw, nil)
+	require.NoError(t, err)
+
+	cs := plugin.NewCycleState()
+	req := requesthandling.NewInferenceRequest()
+	req.Headers["x-maas-username"] = "alice"
+	req.Headers["x-maas-group"] = "ai-eng"
+	req.Body = map[string]any{"model": "claude-opus-4-8", "messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+
+	err = p.(*ExternalMeteringStreamingPlugin).ProcessRequest(context.Background(), cs, req)
+	assert.NoError(t, err)
+
+	username, _ := plugin.ReadCycleStateKey[string](cs, state.MeteringUsernameKey)
+	assert.Equal(t, "alice", username)
+}
+
+func TestStreamingProcessRequest_MissingUsername(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	raw := json.RawMessage(`{"meteringURL":"` + srv.URL + `"}`)
+	p, err := ExternalMeteringStreamingFactory("metering", raw, nil)
+	require.NoError(t, err)
+
+	cs := plugin.NewCycleState()
+	req := requesthandling.NewInferenceRequest()
+	req.Body = map[string]any{"model": "test"}
+
+	err = p.(*ExternalMeteringStreamingPlugin).ProcessRequest(context.Background(), cs, req)
+	assert.NoError(t, err) // should skip, not error
+}
