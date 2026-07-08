@@ -26,7 +26,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	
+
 	errcommon "github.com/llm-d/llm-d-inference-payload-processor/pkg/common/error"
 	"github.com/llm-d/llm-d-inference-payload-processor/pkg/framework/interface/plugin"
 	"github.com/llm-d/llm-d-inference-payload-processor/pkg/framework/interface/requesthandling"
@@ -607,6 +607,99 @@ func TestProcessResponseChunk_UsageInFinalChunk(t *testing.T) {
 	// Final chunk with usage
 	err = sp.ProcessResponseChunk(context.Background(), cs, resp,
 		`data: {"type":"message_delta","usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150}}`, true)
+	assert.NoError(t, err)
+
+	reported.Wait()
+}
+
+// TestProcessResponseChunk_UsageInSplitCompletedEvent reproduces the OpenAI
+// Responses API (Codex) case: usage lives in a large response.completed SSE
+// event that Envoy splits across chunk boundaries, so no individual chunk parses
+// as JSON. The reassembled buffer must recover the usage on the final chunk.
+func TestProcessResponseChunk_UsageInSplitCompletedEvent(t *testing.T) {
+	var reported sync.WaitGroup
+	reported.Add(1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			reported.Done()
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	raw := json.RawMessage(`{"meteringURL":"` + srv.URL + `","failOpen":true}`)
+	p, err := ExternalMeteringStreamingFactory("metering", raw, nil)
+	require.NoError(t, err)
+	sp := p.(*ExternalMeteringStreamingPlugin)
+
+	cs := plugin.NewCycleState()
+	cs.Write(state.MeteringUsernameKey, "alice")
+	cs.Write(state.MeteringGroupKey, "ai-eng")
+	cs.Write(state.MeteringSubscriptionKey, "ai-eng")
+	cs.Write(state.MeteringModelKey, "gpt-5.5")
+	resp := requesthandling.NewInferenceResponse()
+
+	completed := `event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","model":"gpt-5.5","usage":{"input_tokens":8,"output_tokens":6,"total_tokens":14}}}`
+	mid := len(completed) / 2
+
+	// Neither half parses as JSON on its own.
+	err = sp.ProcessResponseChunk(context.Background(), cs, resp, completed[:mid], false)
+	assert.NoError(t, err)
+	err = sp.ProcessResponseChunk(context.Background(), cs, resp, completed[mid:], false)
+	assert.NoError(t, err)
+	// Final (empty) chunk triggers reassembly and reporting.
+	err = sp.ProcessResponseChunk(context.Background(), cs, resp, "", true)
+	assert.NoError(t, err)
+
+	reported.Wait()
+}
+
+// TestProcessResponseChunk_UsageInPrettyPrintedJSON reproduces the non-streaming
+// OpenAI Responses API case: the body is pretty-printed multi-line JSON split
+// across chunks, so no single line is valid JSON — only the reassembled buffer
+// parsed as a whole document yields the usage.
+func TestProcessResponseChunk_UsageInPrettyPrintedJSON(t *testing.T) {
+	var reported sync.WaitGroup
+	reported.Add(1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			reported.Done()
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	raw := json.RawMessage(`{"meteringURL":"` + srv.URL + `","failOpen":true}`)
+	p, err := ExternalMeteringStreamingFactory("metering", raw, nil)
+	require.NoError(t, err)
+	sp := p.(*ExternalMeteringStreamingPlugin)
+
+	cs := plugin.NewCycleState()
+	cs.Write(state.MeteringUsernameKey, "alice")
+	cs.Write(state.MeteringGroupKey, "ai-eng")
+	cs.Write(state.MeteringSubscriptionKey, "ai-eng")
+	cs.Write(state.MeteringModelKey, "gpt-5.5")
+	resp := requesthandling.NewInferenceResponse()
+
+	body := `{
+  "id": "resp_1",
+  "object": "response",
+  "status": "completed",
+  "model": "gpt-5.5",
+  "usage": {
+    "input_tokens": 8,
+    "output_tokens": 6,
+    "total_tokens": 14
+  }
+}`
+	mid := len(body) / 2
+
+	err = sp.ProcessResponseChunk(context.Background(), cs, resp, body[:mid], false)
+	assert.NoError(t, err)
+	err = sp.ProcessResponseChunk(context.Background(), cs, resp, body[mid:], false)
+	assert.NoError(t, err)
+	err = sp.ProcessResponseChunk(context.Background(), cs, resp, "", true)
 	assert.NoError(t, err)
 
 	reported.Wait()

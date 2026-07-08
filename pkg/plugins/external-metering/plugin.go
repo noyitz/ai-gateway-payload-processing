@@ -345,12 +345,30 @@ func (p *ExternalMeteringStreamingPlugin) ProcessResponseChunk(ctx context.Conte
 		if usage != nil {
 			logger.V(logutil.VERBOSE).Info("usage found in chunk")
 			cycleState.Write(state.MeteringLastUsageKey, usage)
+		} else {
+			// The usage-bearing payload can be split across Envoy chunk
+			// boundaries: OpenAI's response.completed SSE event is large, and
+			// non-streaming JSON bodies arrive in multiple chunks. No individual
+			// chunk parses as valid JSON in those cases, so accumulate the raw
+			// stream to re-parse the reassembled body on the final chunk.
+			prev, _ := plugin.ReadCycleStateKey[string](cycleState, meteringChunkBufferKey)
+			cycleState.Write(meteringChunkBufferKey, prev+chunk)
 		}
 	}
 
 	if isFinal {
 		lastUsage, err := plugin.ReadCycleStateKey[map[string]any](cycleState, state.MeteringLastUsageKey)
 		if err != nil || lastUsage == nil {
+			// Fall back to the reassembled buffer: a payload split across
+			// chunks parses cleanly once the pieces are concatenated.
+			if buf, bufErr := plugin.ReadCycleStateKey[string](cycleState, meteringChunkBufferKey); bufErr == nil && buf != "" {
+				if usage := extractUsageFromBody(buf); usage != nil {
+					logger.V(logutil.VERBOSE).Info("usage found in reassembled response")
+					lastUsage = usage
+				}
+			}
+		}
+		if lastUsage == nil {
 			logger.Info("no usage data found in streaming response")
 			return nil
 		}
@@ -358,6 +376,29 @@ func (p *ExternalMeteringStreamingPlugin) ProcessResponseChunk(ctx context.Conte
 	}
 
 	return nil
+}
+
+// meteringChunkBufferKey holds the raw response body accumulated across chunks,
+// used to recover usage from payloads split across Envoy chunk boundaries.
+const meteringChunkBufferKey = "metering-chunk-buffer"
+
+// extractUsageFromBody extracts usage from a fully reassembled response body.
+// Non-streaming JSON responses are often pretty-printed across many lines, so
+// no single line parses — try the whole buffer as one document first, then
+// fall back to per-line SSE extraction.
+func extractUsageFromBody(buf string) map[string]any {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(buf), &parsed); err == nil {
+		if usage, ok := parsed["usage"].(map[string]any); ok {
+			return usage
+		}
+		if resp, ok := parsed["response"].(map[string]any); ok {
+			if usage, ok := resp["usage"].(map[string]any); ok {
+				return usage
+			}
+		}
+	}
+	return extractUsageFromChunk(buf)
 }
 
 // extractUsageFromChunk parses SSE or JSON chunks to find usage data.
