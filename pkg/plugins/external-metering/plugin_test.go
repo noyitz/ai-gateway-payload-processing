@@ -19,6 +19,7 @@ package external_metering
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -743,4 +744,50 @@ func TestProcessResponseChunk_MissingUsername(t *testing.T) {
 	err = sp.ProcessResponseChunk(context.Background(), cs, resp,
 		`data: {"usage":{"input_tokens":10,"output_tokens":5}}`, true)
 	assert.NoError(t, err)
+}
+
+// TestProcessResponseChunk_ErrorResponseReported verifies that a provider error
+// body (no usage anywhere in the stream) is reported as an
+// inference.request.error event instead of being silently dropped.
+func TestProcessResponseChunk_ErrorResponseReported(t *testing.T) {
+	var received map[string]any
+	var reported sync.WaitGroup
+	reported.Add(1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &received)
+			reported.Done()
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	raw := json.RawMessage(`{"meteringURL":"` + srv.URL + `","failOpen":true}`)
+	p, err := ExternalMeteringStreamingFactory("metering", raw, nil)
+	require.NoError(t, err)
+	sp := p.(*ExternalMeteringStreamingPlugin)
+
+	cs := plugin.NewCycleState()
+	cs.Write(state.MeteringUsernameKey, "alice")
+	cs.Write(state.MeteringGroupKey, "ai-eng")
+	cs.Write(state.MeteringSubscriptionKey, "ai-eng")
+	cs.Write(state.MeteringModelKey, "claude-sonnet-4-6")
+	resp := requesthandling.NewInferenceResponse()
+	resp.Headers[":status"] = "400"
+
+	errBody := `{"type":"error","error":{"type":"invalid_request_error","message":"context_management: Extra inputs are not permitted"}}`
+	mid := len(errBody) / 2
+
+	require.NoError(t, sp.ProcessResponseChunk(context.Background(), cs, resp, errBody[:mid], false))
+	require.NoError(t, sp.ProcessResponseChunk(context.Background(), cs, resp, errBody[mid:], false))
+	require.NoError(t, sp.ProcessResponseChunk(context.Background(), cs, resp, "", true))
+
+	reported.Wait()
+	assert.Equal(t, "inference.request.error", received["type"])
+	data, ok := received["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "alice", data["user"])
+	assert.Equal(t, float64(400), data["status_code"])
+	assert.Equal(t, "invalid_request_error", data["error_type"])
 }

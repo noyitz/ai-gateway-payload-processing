@@ -369,13 +369,114 @@ func (p *ExternalMeteringStreamingPlugin) ProcessResponseChunk(ctx context.Conte
 			}
 		}
 		if lastUsage == nil {
-			logger.Info("no usage data found in streaming response")
+			// A response with no usage anywhere may be a provider error:
+			// 4xx/5xx bodies carry an "error" object instead of usage.
+			buf, _ := plugin.ReadCycleStateKey[string](cycleState, meteringChunkBufferKey)
+			if errorEvent := extractErrorFromResponse(buf, response); errorEvent != nil {
+				logger.Info("error response detected", "error", errorEvent)
+				p.reportErrorEvent(ctx, cycleState, errorEvent)
+			} else {
+				logger.Info("no usage data found in streaming response")
+			}
 			return nil
 		}
 		p.reportUsageEvent(ctx, cycleState, lastUsage)
 	}
 
 	return nil
+}
+
+// extractErrorFromResponse checks the accumulated response buffer for a provider
+// error body ({"error":{...}} or {"error":"..."}), returning event data or nil.
+func extractErrorFromResponse(buf string, response *requesthandling.InferenceResponse) map[string]any {
+	if buf == "" {
+		return nil
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(buf), &parsed); err != nil {
+		for _, line := range splitSSELines(buf) {
+			if json.Unmarshal([]byte(line), &parsed) == nil {
+				break
+			}
+		}
+	}
+	if parsed == nil {
+		return nil
+	}
+
+	var errorType, errorMessage string
+	if errObj, ok := parsed["error"].(map[string]any); ok {
+		errorType, _ = errObj["type"].(string)
+		errorMessage, _ = errObj["message"].(string)
+	} else if errStr, ok := parsed["error"].(string); ok {
+		errorMessage = errStr
+	}
+	if errorType == "" && errorMessage == "" {
+		return nil
+	}
+
+	statusCode := 0
+	if response != nil {
+		if status, ok := response.Headers[":status"]; ok {
+			fmt.Sscanf(status, "%d", &statusCode)
+		}
+	}
+
+	return map[string]any{
+		"status_code":   statusCode,
+		"error_type":    errorType,
+		"error_message": errorMessage,
+	}
+}
+
+// reportErrorEvent sends an inference.request.error CloudEvent to the metering service.
+func (b *meteringBase) reportErrorEvent(ctx context.Context, cycleState *plugin.CycleState, errorInfo map[string]any) {
+	logger := log.FromContext(ctx)
+
+	username, _ := plugin.ReadCycleStateKey[string](cycleState, state.MeteringUsernameKey)
+	group, _ := plugin.ReadCycleStateKey[string](cycleState, state.MeteringGroupKey)
+	subscription, _ := plugin.ReadCycleStateKey[string](cycleState, state.MeteringSubscriptionKey)
+	model, _ := plugin.ReadCycleStateKey[string](cycleState, state.MeteringModelKey)
+	provider, _ := plugin.ReadCycleStateKey[string](cycleState, state.ProviderKey)
+
+	var durationMs int64
+	if reqTime, err := plugin.ReadCycleStateKey[time.Time](cycleState, state.MeteringRequestTimeKey); err == nil {
+		durationMs = time.Since(reqTime).Milliseconds()
+	}
+
+	event := map[string]any{
+		"specversion":     "1.0",
+		"id":              fmt.Sprintf("evt-%s", uuid.New().String()),
+		"source":          b.source,
+		"type":            "inference.request.error",
+		"subject":         username,
+		"time":            time.Now().UTC().Format(time.RFC3339),
+		"datacontenttype": "application/json",
+		"data": map[string]any{
+			"user":          username,
+			"group":         group,
+			"subscription":  subscription,
+			"provider":      provider,
+			"model":         model,
+			"status_code":   errorInfo["status_code"],
+			"error_type":    errorInfo["error_type"],
+			"error_message": errorInfo["error_message"],
+			"duration_ms":   durationMs,
+		},
+	}
+
+	eventJSON, marshalErr := json.Marshal(event)
+	if marshalErr != nil {
+		logger.Error(marshalErr, "failed to marshal error event")
+		return
+	}
+
+	if reportErr := b.client.reportUsage(ctx, eventJSON); reportErr != nil {
+		logger.Error(reportErr, "failed to report error event to metering system")
+	} else {
+		logger.Info("error event reported", "customer", username, "model", model, "errorType", errorInfo["error_type"])
+	}
 }
 
 // meteringChunkBufferKey holds the raw response body accumulated across chunks,
