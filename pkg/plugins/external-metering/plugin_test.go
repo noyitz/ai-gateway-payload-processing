@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -790,4 +791,43 @@ func TestProcessResponseChunk_ErrorResponseReported(t *testing.T) {
 	assert.Equal(t, "alice", data["user"])
 	assert.Equal(t, float64(400), data["status_code"])
 	assert.Equal(t, "invalid_request_error", data["error_type"])
+}
+
+// TestExtractErrorFromResponse_TruncatesLongMessage verifies provider error text
+// is capped before being persisted to metering.
+func TestExtractErrorFromResponse_TruncatesLongMessage(t *testing.T) {
+	long := strings.Repeat("x", 2*maxErrorMessageLen)
+	buf := `{"type":"error","error":{"type":"invalid_request_error","message":"` + long + `"}}`
+
+	resp := requesthandling.NewInferenceResponse()
+	resp.Headers[":status"] = "400"
+
+	info := extractErrorFromResponse(buf, resp)
+	require.NotNil(t, info)
+	msg, ok := info["error_message"].(string)
+	require.True(t, ok)
+	assert.LessOrEqual(t, len(msg), maxErrorMessageLen+len("…"))
+	assert.Equal(t, 400, info["status_code"])
+}
+
+// TestExtractErrorFromResponse_MalformedBufferNotMisparsed verifies that a buffer
+// that fails full-body and per-line JSON parsing yields nil rather than acting on
+// a partially-filled map.
+func TestExtractErrorFromResponse_MalformedBufferNotMisparsed(t *testing.T) {
+	// Valid prefix that would partially fill the map before the syntax error.
+	buf := `{"error":{"type":"invalid_request_error","message":"boom"},INVALID`
+
+	info := extractErrorFromResponse(buf, nil)
+	assert.Nil(t, info, "partially-parsed garbage must not produce an error event")
+}
+
+// TestExtractErrorFromResponse_NonNumericStatus verifies a garbage :status header
+// degrades to status_code 0 rather than failing.
+func TestExtractErrorFromResponse_NonNumericStatus(t *testing.T) {
+	resp := requesthandling.NewInferenceResponse()
+	resp.Headers[":status"] = "abc"
+
+	info := extractErrorFromResponse(`{"error":{"type":"x","message":"y"}}`, resp)
+	require.NotNil(t, info)
+	assert.Equal(t, 0, info["status_code"])
 }

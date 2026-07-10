@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -395,10 +396,14 @@ func extractErrorFromResponse(buf string, response *requesthandling.InferenceRes
 
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(buf), &parsed); err != nil {
+		// Unmarshal may partially fill the map before failing; discard it
+		// before trying individual SSE lines.
+		parsed = nil
 		for _, line := range splitSSELines(buf) {
 			if json.Unmarshal([]byte(line), &parsed) == nil {
 				break
 			}
+			parsed = nil
 		}
 	}
 	if parsed == nil {
@@ -419,15 +424,29 @@ func extractErrorFromResponse(buf string, response *requesthandling.InferenceRes
 	statusCode := 0
 	if response != nil {
 		if status, ok := response.Headers[":status"]; ok {
-			fmt.Sscanf(status, "%d", &statusCode)
+			if code, err := strconv.Atoi(status); err == nil {
+				statusCode = code
+			}
 		}
 	}
 
 	return map[string]any{
 		"status_code":   statusCode,
 		"error_type":    errorType,
-		"error_message": errorMessage,
+		"error_message": truncateErrorMessage(errorMessage),
 	}
+}
+
+// maxErrorMessageLen caps the provider error text persisted to metering:
+// error bodies can be long and may echo request content, neither of which
+// belongs in the metering store.
+const maxErrorMessageLen = 256
+
+func truncateErrorMessage(msg string) string {
+	if len(msg) <= maxErrorMessageLen {
+		return msg
+	}
+	return msg[:maxErrorMessageLen] + "…"
 }
 
 // reportErrorEvent sends an inference.request.error CloudEvent to the metering service.
