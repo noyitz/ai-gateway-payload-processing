@@ -42,6 +42,12 @@ import (
 
 const (
 	ModelProviderResolverPluginType = "model-provider-resolver"
+
+	// SelectedProviderHeader is set by the plugin on each request to drive
+	// Envoy routing. The HTTPRoute reconciler creates per-provider route rules
+	// that match on this header, ensuring the destination and credential are
+	// always consistent.
+	SelectedProviderHeader = "x-ipp-selected-provider"
 )
 
 var _ requesthandling.RequestProcessor = &ModelProviderResolverPlugin{}
@@ -171,6 +177,10 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 
 	ref := selectByWeight(modelInfo.refs)
 
+	// Drive Envoy routing to the selected provider's backend.
+	request.SetHeader(SelectedProviderHeader, ref.providerName)
+	request.SetHeader("Host", ref.endpoint)
+
 	if model != ref.targetModel {
 		request.SetBodyField("model", ref.targetModel)
 	}
@@ -206,16 +216,24 @@ func detectInputAPIFormat(path string) apiformat.APIFormat {
 
 // selectByWeight picks a provider ref using weighted random selection.
 // With a single ref, returns it directly (no randomness).
+// selectByWeight picks a provider ref using weighted random selection.
+// Refs with weight <= 0 are skipped (disabled). With a single eligible
+// ref, returns it directly (no randomness).
 func selectByWeight(refs []*resolvedProviderRef) *resolvedProviderRef {
-	if len(refs) == 1 {
-		return refs[0]
-	}
 	totalWeight := 0
 	for _, ref := range refs {
-		totalWeight += ref.weight
+		if ref.weight > 0 {
+			totalWeight += ref.weight
+		}
+	}
+	if totalWeight == 0 {
+		return refs[0]
 	}
 	r := rand.IntN(totalWeight)
 	for _, ref := range refs {
+		if ref.weight <= 0 {
+			continue
+		}
 		r -= ref.weight
 		if r < 0 {
 			return ref
