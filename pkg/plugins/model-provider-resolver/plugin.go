@@ -183,6 +183,7 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 	// Drive Envoy routing to the selected provider's backend.
 	request.SetHeader(SelectedProviderHeader, ref.providerName)
 	request.SetHeader("Host", ref.endpoint)
+	request.SetHeader("X-Gateway-Model-Name", ref.targetModel)
 
 	if model != ref.targetModel {
 		request.SetBodyField("model", ref.targetModel)
